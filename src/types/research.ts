@@ -44,7 +44,10 @@ export interface Claim {
 export interface EvidenceItem {
   documentId: string;
   chunkId: string;
-  text: string; // The snippet content
+  
+  // RENAMED from 'text' to 'snippet' to match agent usage
+  snippet: string; 
+  
   url: string;
   title: string;
   
@@ -52,7 +55,7 @@ export interface EvidenceItem {
   confidenceScore: number; 
   
   // Relationship to claim
-  supportStatus: 'pro' | 'contra' | 'neutral';
+  supportStatus: 'pro' | 'con' | 'neutral'; // Changed 'contra' to 'con' to match common agent logic
 }
 
 // Document Entity (Source)

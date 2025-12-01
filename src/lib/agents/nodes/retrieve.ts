@@ -10,20 +10,23 @@ interface RetrieveState {
   sources: DocumentSource[];
   iteration: number;
   searchQueries: string[];
-  config?: { deepSearch: boolean }; // Added config to interface
+  config?: { 
+    deepSearch: boolean;
+    breadth: number; // NEW: Breadth setting
+  }; 
 }
 
 export async function retrieveForClaim(state: RetrieveState): Promise<Partial<RetrieveState>> {
   const { claim, iteration, searchQueries, config } = state;
-  const isDeepMode = config?.deepSearch || false; // Check flag
+  const isDeepMode = config?.deepSearch || false; 
+  const breadth = config?.breadth || 3; // Default to 3
   
-  console.log(`[DEBUG][Retrieve] ========== RETRIEVE START ==========`);
-  console.log(`[DEBUG][Retrieve] Deep Mode: ${isDeepMode}`);
+  console.log(`[DEBUG][Retrieve] ========== RETRIEVE START (Breadth: ${breadth}) ==========`);
   
   const newSources: DocumentSource[] = [];
   const queriesToRun = searchQueries.length > 0 ? searchQueries : [claim.text];
 
-  // Limit iterations based on mode (Deep = 3 queries, Fast = 1 query)
+  // In Deep Mode, run more queries. In Fast Mode, just 1.
   const queryLimit = isDeepMode ? 3 : 1;
 
   for (const query of queriesToRun.slice(0, queryLimit)) {
@@ -32,10 +35,9 @@ export async function retrieveForClaim(state: RetrieveState): Promise<Partial<Re
     try {
       const searchResults = await searchWeb(query);
       
-      // Limit results based on mode
-      const resultLimit = isDeepMode ? 8 : 3;
-
-      for (let i = 0; i < Math.min(resultLimit, searchResults.length); i++) {
+      // USE BREADTH SETTING HERE
+      // Limit the number of results processed per query
+      for (let i = 0; i < Math.min(breadth, searchResults.length); i++) {
         const result = searchResults[i];
         
         let trustScore = calculateTrustScore(result.url);
@@ -60,9 +62,7 @@ export async function retrieveForClaim(state: RetrieveState): Promise<Partial<Re
           }
         };
         
-        // ============================================================
-        // RECURSIVE DEPTH LOGIC (Only if deepMode is ON)
-        // ============================================================
+        // Recursive logic
         if (isDeepMode && trustScore > 0.8 && iteration < 2 && !result.url.endsWith('.pdf')) {
              console.log(`[Retrieve] 🔍 RECURSIVE CRAWL: ${result.url}`);
              try {

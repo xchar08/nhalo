@@ -1,109 +1,84 @@
 // ============================================================================
 // FILE: src/components/pdr/PdrViewer.tsx
 // ============================================================================
-'use client';
-
-import { useState } from 'react';
-import { Claim } from '@/types/research';
-import { ChevronRight, ExternalLink, ShieldCheck, ShieldAlert, ShieldQuestion } from 'lucide-react';
+import React from 'react';
+import { Claim, EvidenceItem } from '@/types/research';
+import { CheckCircle2, HelpCircle, XCircle, ExternalLink, ChevronRight, FileText } from 'lucide-react';
 
 interface PdrViewerProps {
   claims: Claim[];
 }
 
-export default function PdrViewer({ claims }: PdrViewerProps) {
-  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
-
-  const getVerdictIcon = (verdict: string) => {
-    switch (verdict) {
-      case 'supported': return <ShieldCheck size={14} className="text-cyan-400" />;
-      case 'refuted': return <ShieldAlert size={14} className="text-red-400" />;
-      default: return <ShieldQuestion size={14} className="text-gray-400" />;
-    }
-  };
+const PdrViewer: React.FC<PdrViewerProps> = ({ claims }) => {
+  if (!claims || claims.length === 0) {
+    return <div className="p-4 text-xs text-gray-500 italic text-center">No active analysis stream.</div>;
+  }
 
   return (
-    <div className="w-full pb-10">
-      {claims.map((claim) => {
-        const isSelected = selectedClaimId === claim.id;
-        
-        return (
-          <div 
-            key={claim.id}
-            className={`border-b border-white/5 transition-colors ${isSelected ? 'bg-white/5' : 'hover:bg-white/[0.02]'}`}
-          >
-            {/* Claim Header (Click to Expand) */}
-            <div 
-              className="p-4 cursor-pointer"
-              onClick={() => setSelectedClaimId(isSelected ? null : claim.id)}
-            >
-              <div className="flex items-start gap-3">
-                 <div className="mt-0.5">{getVerdictIcon(claim.verdict)}</div>
-                 <div className="flex-1">
-                    <p className="text-sm text-gray-300 leading-relaxed font-light">{claim.text}</p>
-                    <div className="flex items-center gap-3 mt-2">
-                       <span className={`text-[10px] font-bold tracking-wider uppercase ${
-                          claim.verdict === 'supported' ? 'text-cyan-500' : 
-                          claim.verdict === 'refuted' ? 'text-red-500' : 'text-gray-500'
-                       }`}>
-                         {claim.verdict}
-                       </span>
-                       <span className="text-[10px] font-mono text-gray-600">
-                         {Math.round(claim.confidence * 100)}% CONFIDENCE
-                       </span>
-                    </div>
-                 </div>
-                 <ChevronRight size={14} className={`text-gray-600 transition-transform ${isSelected ? 'rotate-90' : ''}`} />
-              </div>
+    <div className="w-full pb-20">
+      {claims.map((claim) => (
+        <div key={claim.id} className="border-b border-white/10 p-4 hover:bg-white/5 transition-colors group">
+          {/* Header: Verdict & Claim */}
+          <div className="flex items-start gap-3 mb-3">
+            <div className="mt-0.5 shrink-0">
+               {claim.verdict === 'supported' && <CheckCircle2 size={16} className="text-green-400" />}
+               {claim.verdict === 'refuted' && <XCircle size={16} className="text-red-400" />}
+               {(claim.verdict === 'debated' || claim.verdict === 'unknown') && <HelpCircle size={16} className="text-amber-400" />}
             </div>
-
-            {/* Evidence Drawer */}
-            {isSelected && (
-              <div className="bg-black/40 px-4 pb-4 space-y-2 border-t border-white/5 shadow-inner">
-                 <div className="sticky top-0 bg-[#0c0c0c] z-10 py-2 border-b border-white/5 mb-2">
-                    <h4 className="text-[10px] font-bold text-gray-500 uppercase">Supporting Evidence</h4>
-                 </div>
-                 
-                 {claim.evidence.map((ev) => (
-                    <a 
-                      key={ev.documentId}
-                      href={ev.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block p-3 rounded bg-[#1a1a1a] hover:bg-[#252525] border border-white/5 transition-all group"
-                    >
-                      <div className="flex items-start justify-between gap-2 mb-1">
-                         <h5 className="text-xs font-medium text-cyan-100 line-clamp-1 group-hover:text-cyan-400 transition-colors">
-                           {ev.title || ev.url}
-                         </h5>
-                         <ExternalLink size={10} className="text-gray-600 group-hover:text-cyan-400" />
-                      </div>
-                      <p className="text-[10px] text-gray-400 line-clamp-2 leading-relaxed mb-2">
-                        {ev.text}
-                      </p>
-                      <div className="flex items-center gap-2">
-                        {/* Visual Confidence Bar */}
-                        <div className="flex-1 h-1 bg-black rounded-full overflow-hidden">
-                           <div 
-                             className={`h-full ${ev.supportStatus === 'pro' ? 'bg-cyan-500' : 'bg-amber-500'}`} 
-                             style={{ width: `${ev.confidenceScore * 100}%` }} 
-                           />
-                        </div>
-                        <span className="text-[9px] font-mono text-gray-500">{Math.round(ev.confidenceScore * 100)}%</span>
-                      </div>
-                    </a>
-                 ))}
-
-                 {claim.evidence.length === 0 && (
-                   <div className="text-xs text-gray-600 italic py-4 text-center">
-                     No direct evidence found via open web search.
-                   </div>
-                 )}
-              </div>
-            )}
+            
+            <div className="flex-1">
+               <h4 className="text-xs font-medium text-gray-200 leading-relaxed font-mono">
+                 {claim.text}
+               </h4>
+               <div className="flex items-center gap-2 mt-2">
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wider border ${
+                      claim.verdict === 'supported' ? 'border-green-900 text-green-400 bg-green-900/20' :
+                      claim.verdict === 'refuted' ? 'border-red-900 text-red-400 bg-red-900/20' :
+                      'border-amber-900 text-amber-400 bg-amber-900/20'
+                  }`}>
+                    {claim.verdict}
+                  </span>
+                  <span className="text-[9px] text-gray-600 font-mono">
+                    CONFIDENCE: {Math.round(claim.confidence * 100)}%
+                  </span>
+               </div>
+            </div>
           </div>
-        );
-      })}
+
+          {/* Evidence List */}
+          {claim.evidence && claim.evidence.length > 0 && (
+            <div className="pl-7 mt-2 border-l border-white/10 ml-2 space-y-2">
+              {claim.evidence.slice(0, 3).map((ev: EvidenceItem, i: number) => (
+                <div key={i} className="bg-black/20 p-2 rounded border border-white/5 text-[10px]">
+                   <div className="flex justify-between items-start mb-1">
+                      <a 
+                        href={ev.url} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-cyan-500 hover:underline flex items-center gap-1 truncate max-w-[80%]"
+                      >
+                        <FileText size={8} />
+                        {ev.title || ev.url}
+                      </a>
+                      <span className="text-gray-600">{Math.round(ev.confidenceScore * 100)}%</span>
+                   </div>
+                   {/* UPDATED: Using 'snippet' instead of 'text' */}
+                   <p className="text-gray-400 leading-snug line-clamp-2">
+                      {ev.snippet} 
+                   </p>
+                </div>
+              ))}
+              {claim.evidence.length > 3 && (
+                  <div className="text-[9px] text-gray-600 pl-1 pt-1 flex items-center gap-1">
+                     <ChevronRight size={8} /> {claim.evidence.length - 3} more sources...
+                  </div>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
-}
+};
+
+export default PdrViewer;

@@ -24,8 +24,6 @@ export async function gradeEvidence(state: GradeState): Promise<Partial<GradeSta
     console.log(`[DEBUG][Grade] --- Grading source ${i}: ${source.url.slice(0, 50)} ---`);
     
     const content = (source.metadata.rawMarkdown as string) || (source.metadata.snippet as string) || "";
-    console.log(`[DEBUG][Grade] Content length: ${content.length}`);
-    console.log(`[DEBUG][Grade] Content preview: "${content.slice(0, 100)}..."`);
     
     if (content.length < 10) {
       console.log(`[DEBUG][Grade] SKIPPED: Content too short`);
@@ -33,20 +31,18 @@ export async function gradeEvidence(state: GradeState): Promise<Partial<GradeSta
     }
 
     const relevance = calculateRelevance(claim.text, content);
-    console.log(`[DEBUG][Grade] Relevance score: ${relevance}`);
-    
     const trustScore = source.sourceTrustScore || 0.5;
-    console.log(`[DEBUG][Grade] Trust score: ${trustScore}`);
     
     let finalConfidence = (0.6 * relevance) + (0.4 * trustScore);
     if (finalConfidence < 0.25) finalConfidence = 0.25;
     
-    console.log(`[DEBUG][Grade] Final confidence: ${finalConfidence}`);
-
     const evidence: EvidenceItem = {
       documentId: source.id,
       chunkId: crypto.randomUUID(),
-      text: content.slice(0, 250),
+      
+      // UPDATED: Property is now 'snippet'
+      snippet: content.slice(0, 300), 
+      
       url: source.url,
       title: source.title || source.url,
       confidenceScore: parseFloat(finalConfidence.toFixed(2)),
