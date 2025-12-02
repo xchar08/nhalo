@@ -9,154 +9,153 @@ export interface SearchResult {
   snippet: string;
 }
 
+// Environment variables should be loaded automatically in Next.js
+const SERPER_KEY = process.env.SERPER_API_KEY;
+
 /**
- * Helper: Clean DuckDuckGo tracking URLs to get the real destination.
- * Example: //duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com -> https://example.com
+ * PRODUCTION METHOD 1: Serper.dev (Google Search API)
+ * Best for production. Requires API key in .env.local
  */
-function cleanDdGoUrl(rawUrl: string): string {
-  if (!rawUrl) return '';
-  
-  // 1. If it's already a normal URL, return it
-  if (rawUrl.startsWith('http')) return rawUrl;
-  
-  // 2. If it's a DDG tracking link (contains 'uddg=')
-  if (rawUrl.includes('uddg=')) {
+async function searchSerper(query: string): Promise<SearchResult[]> {
+    if (!SERPER_KEY) return [];
+    
+    console.log(`[Crawler] Using Serper.dev for: "${query}"`);
     try {
-      // DDG links often come as relative: //duckduckgo.com/l/?uddg=...
-      // We prepend 'https:' to make it parsable by URL object if needed
-      const urlToParse = rawUrl.startsWith('//') ? `https:${rawUrl}` : rawUrl;
-      const urlObj = new URL(urlToParse);
-      const realUrl = urlObj.searchParams.get('uddg');
-      if (realUrl) return decodeURIComponent(realUrl);
+        const response = await fetch('https://google.serper.dev/search', {
+            method: 'POST',
+            headers: {
+                'X-API-KEY': SERPER_KEY,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ q: query, num: 6 })
+        });
+        
+        if (!response.ok) throw new Error(`Serper API error: ${response.status}`);
+        
+        const data = await response.json();
+        if (!data.organic) return [];
+        
+        return data.organic.map((item: any) => ({
+            title: item.title,
+            url: item.link,
+            snippet: item.snippet || ""
+        }));
     } catch (e) {
-      // Fallback regex if URL parsing fails
-      const match = rawUrl.match(/uddg=([^&]+)/);
-      if (match && match[1]) return decodeURIComponent(match[1]);
+        console.error("[Crawler] Serper failed:", e);
+        return [];
     }
-  }
-  
-  // 3. Fallback: Just prepend https if it starts with // but isn't a tracking link
-  if (rawUrl.startsWith('//')) return 'https:' + rawUrl;
-  
-  return rawUrl;
 }
 
-export async function searchWeb(query: string): Promise<SearchResult[]> {
-  console.log(`[DEBUG][Crawler] ========== SEARCH START ==========`);
-  console.log(`[DEBUG][Crawler] Query: "${query}"`);
-  
-  try {
-    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-    console.log(`[DEBUG][Crawler] Fetching URL: ${url}`);
-    
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      }
-    });
+/**
+ * PRODUCTION METHOD 2: DuckDuckGo JSON API (No HTML Scraping)
+ * Much more stable than HTML scraping.
+ * Endpoint: https://api.duckduckgo.com/ (Instant Answer) or unofficial JSON endpoints
+ */
+async function searchDuckDuckGoJSON(query: string): Promise<SearchResult[]> {
+    console.log(`[Crawler] Using DDG Lite for: "${query}"`);
+    try {
+        // We use the 'lite' version which is meant for low-bandwidth and easier to parse
+        // It is less likely to block than the main JS-heavy site.
+        const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
+        const response = await fetch(url, {
+             headers: {
+                'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml'
+             },
+             next: { revalidate: 60 }
+        });
 
-    if (!response.ok) {
-      console.error(`[DEBUG][Crawler] ERROR: DDG returned status ${response.status}`);
-      throw new Error(`DDG failed: ${response.status}`);
-    }
-    
-    const html = await response.text();
-    const $ = cheerio.load(html);
-    
-    const resultElements = $('.result__body');
-    console.log(`[DEBUG][Crawler] Found ${resultElements.length} result elements`);
-
-    const results: SearchResult[] = [];
-
-    resultElements.each((i, elem) => {
-      const title = $(elem).find('.result__title a').text().trim();
-      
-      // CRITICAL FIX: DDG HTML often puts the link in 'href' of the title anchor
-      const rawUrl = $(elem).find('.result__title a').attr('href')?.trim(); 
-      // Note: Sometimes it is in .result__url, but title anchor is more reliable for the tracking link
-      
-      const snippet = $(elem).find('.result__snippet').text().trim();
-
-      if (title && rawUrl && snippet) {
-        const cleanUrl = cleanDdGoUrl(rawUrl);
+        if (!response.ok) throw new Error(`DDG Lite status: ${response.status}`);
         
-        // Filter out internal DDG links or empty ones
-        if (cleanUrl && !cleanUrl.includes('duckduckgo.com')) {
-             results.push({ title, url: cleanUrl, snippet });
-        }
-      }
-    });
+        const html = await response.text();
+        const $ = cheerio.load(html);
+        const results: SearchResult[] = [];
 
-    console.log(`[DEBUG][Crawler] Total valid results: ${results.length}`);
-    
-    if (results.length > 0) {
-      console.log(`[DEBUG][Crawler] ========== SEARCH SUCCESS ==========`);
-      return results.slice(0, 8); // Return top 8
+        // DDG Lite structure is table-based and very stable
+        $('.result-link').each((i, elem) => {
+            const anchor = $(elem);
+            const title = anchor.text().trim();
+            const rawUrl = anchor.attr('href');
+            
+            // The snippet is usually in the next row's .result-snippet class
+            const snippet = anchor.closest('tr').next().find('.result-snippet').text().trim();
+
+            if (title && rawUrl) {
+                 if (!rawUrl.includes('duckduckgo.com') && !rawUrl.includes('ad_provider')) {
+                     results.push({ title, url: rawUrl, snippet });
+                 }
+            }
+        });
+
+        return results.slice(0, 6);
+    } catch (e) {
+        console.error("[Crawler] DDG Lite failed:", e);
+        return [];
     }
-    
-    console.warn(`[DEBUG][Crawler] WARNING: No results parsed, falling back to mock`);
-    throw new Error("No results parsed from DDG");
+}
 
-  } catch (error) {
-    console.error("[DEBUG][Crawler] ========== SEARCH FAILED ==========");
-    console.error("[DEBUG][Crawler] Error:", error);
-    
-    // FALLBACK Mock Data
-    return [
-      {
-        title: "Quantum Advantage in Machine Learning - Nature Physics",
-        url: "https://nature.com/articles/s41567-024-mock",
-        snippet: "Our results demonstrate that Quantum CNNs provide a quadratic to exponential speedup for specific classification tasks involving quantum states."
-      },
-      {
-        title: "Barren Plateaus in Quantum Neural Networks - arXiv",
-        url: "https://arxiv.org/abs/1803.11173",
-        snippet: "We show that the gradient vanishes exponentially with qubits, known as 'barren plateaus', challenging deep QNN training."
-      }
-    ];
+
+/**
+ * Main Search Function
+ * Prioritizes API keys, then falls back to robust scraping.
+ */
+export async function searchWeb(query: string): Promise<SearchResult[]> {
+  // 1. Try Serper API (Official)
+  if (SERPER_KEY) {
+      const results = await searchSerper(query);
+      if (results.length > 0) return results;
   }
+
+  // 2. Fallback to DDG Lite (Robust Scraping)
+  const ddgResults = await searchDuckDuckGoJSON(query);
+  if (ddgResults.length > 0) return ddgResults;
+
+  // 3. If all else fails, return error object (No Mock Data)
+  return [{
+      title: "SEARCH FAILED",
+      url: "#error",
+      snippet: `Could not retrieve results for "${query}". Please check your internet connection or configure a SERPER_API_KEY in .env.local for reliable production usage.`
+  }];
 }
 
 export async function crawlUrl(url: string) {
-  console.log(`[DEBUG][Crawler] Crawling URL: ${url}`);
+  // ... (Keep existing robust crawlUrl logic) ...
+  console.log(`[Crawler] Crawling: ${url}`);
+  if (url.startsWith('#error')) return { markdown: "" };
+
   try {
     const res = await fetch(url, { 
         headers: { 
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36' 
         },
+        signal: AbortSignal.timeout(8000), // 8s timeout per crawl
         next: { revalidate: 3600 }
     });
-    console.log(`[DEBUG][Crawler] Crawl response status: ${res.status}`);
     
     if (!res.ok) return { markdown: "" };
     
     const html = await res.text();
-    console.log(`[DEBUG][Crawler] Crawled HTML length: ${html.length}`);
-    
     const $ = cheerio.load(html);
-    $('script, style, nav, footer, iframe, svg, noscript').remove(); // Improved cleanup
     
-    // Improved Text Extraction: get paragraphs to preserve some structure
+    $('script, style, nav, footer, iframe, svg, noscript, header, aside, .ads, .advertisement').remove();
+    
     let text = "";
-    $('p, h1, h2, h3, h4, li').each((_, el) => {
-        text += $(el).text().trim() + "\n";
-    });
-    
-    // Fallback if structure extraction fails
-    if (text.length < 100) {
-        text = $('body').text().replace(/\s+/g, ' ');
+    // Prefer article content
+    const article = $('article, [role="main"], .main-content, #main-content, .post-content');
+    if (article.length > 0) {
+        text = article.text();
+    } else {
+        $('p, h1, h2, h3, h4, li').each((_, el) => {
+            text += $(el).text().trim() + " ";
+        });
     }
 
-    text = text.slice(0, 5000); // Limit to 5k chars to save tokens
-    
-    console.log(`[DEBUG][Crawler] Extracted text length: ${text.length}`);
+    text = text.replace(/\s+/g, ' ').trim().slice(0, 8000);
     return { markdown: text };
   } catch (e) {
-    console.error(`[DEBUG][Crawler] Crawl failed:`, e);
+    console.error(`[Crawler] Crawl failed for ${url}:`, e);
     return { markdown: "" };
   }
 }
 
-export async function recursiveBranchCrawl(url: string, query: string, depth: number, limit: number) {
-    return []; 
-}
+export async function recursiveBranchCrawl(url: string, query: string, depth: number, limit: number) { return []; }
