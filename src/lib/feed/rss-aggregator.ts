@@ -2,23 +2,28 @@
 // FILE: src/lib/feed/rss-aggregator.ts
 // ============================================================================
 import Parser from 'rss-parser';
-import { GLOBAL_SOURCES, ResearchSource } from '../config/knowledge-base';
+import { GLOBAL_SOURCES, type ResearchSource } from '../config/knowledge-base';
 
+// Initialize Parser with custom headers to avoid 403 Forbidden errors
 const parser = new Parser({
-    timeout: 5000, // Timeout after 5s to prevent hanging on bad sources
+    timeout: 10000, // 10s timeout per feed
     headers: {
-        'User-Agent': 'Research-Aggregator/1.0',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'application/rss+xml, application/xml, text/xml; q=0.1'
     }
 });
 
-// 1. Existing High-Quality Feeds (Hardcoded overrides)
-const TRUSTED_FEEDS = [
-    { id: 'nature', name: 'Nature Research', url: 'http://feeds.nature.com/nature/rss/current', category: 'journal' },
-    { id: 'arxiv_ai', name: 'arXiv (AI)', url: 'http://export.arxiv.org/rss/cs.AI', category: 'preprint' },
-    { id: 'arxiv_cl', name: 'arXiv (Computation)', url: 'http://export.arxiv.org/rss/cs.CL', category: 'preprint' },
-    { id: 'techcrunch', name: 'TechCrunch (AI)', url: 'https://techcrunch.com/category/artificial-intelligence/feed/', category: 'media' },
-    { id: 'mit', name: 'MIT Tech Review', url: 'https://www.technologyreview.com/feed/', category: 'media' },
-    { id: 'yc', name: 'Hacker News', url: 'https://hnrss.org/newest?points=100', category: 'social' } 
+// 1. Manual High-Quality Overrides (These are known good RSS URLs)
+// We prioritize these over the generic knowledge base URLs.
+const TRUSTED_OVERRIDES = [
+    { id: 'nature', name: 'Nature Research', url: 'http://feeds.nature.com/nature/rss/current' },
+    { id: 'arxiv_ai', name: 'arXiv (AI)', url: 'http://export.arxiv.org/rss/cs.AI' },
+    { id: 'arxiv_cl', name: 'arXiv (Computation)', url: 'http://export.arxiv.org/rss/cs.CL' },
+    { id: 'techcrunch', name: 'TechCrunch (AI)', url: 'https://techcrunch.com/category/artificial-intelligence/feed/' },
+    { id: 'mit', name: 'MIT Tech Review', url: 'https://www.technologyreview.com/feed/' },
+    { id: 'yc', name: 'Hacker News', url: 'https://hnrss.org/newest?points=100' },
+    { id: 'wired', name: 'Wired AI', url: 'https://www.wired.com/feed/category/ai/latest/rss' },
+    { id: 'venturebeat', name: 'VentureBeat', url: 'https://venturebeat.com/category/ai/feed/' }
 ];
 
 export interface FeedItem {
@@ -29,92 +34,130 @@ export interface FeedItem {
     contentSnippet: string;
     source: string;
     isoDate: string;
-    // New fields from Knowledge Base
-    category?: string;
-    region?: string;
+    // Extended metadata
+    category: string;
+    region: string;
     institution?: string;
 }
 
 /**
- * Helper: Heuristic to guess an RSS endpoint from a landing page URL.
- * Most knowledge-base URLs are landing pages (e.g., ai.stanford.edu), 
- * which will fail in an RSS parser. We try to guess the feed URL.
+ * Helper: Attempts to convert a landing page URL into a likely RSS feed URL.
+ * Since many KB sources are just "https://site.com", we guess standard feed paths.
  */
-function getProposedRssUrl(url: string): string {
-    // If it already looks like a feed, return it
-    if (url.includes('.xml') || url.includes('rss') || url.includes('feed')) {
-        return url;
-    }
+function guessFeedUrl(url: string): string {
+    // If it already looks like a file or feed, return it
+    if (url.match(/(\.xml|\.rss|feed|atom)$/i)) return url;
     
-    // Clean trailing slash
-    const cleanUrl = url.replace(/\/$/, '');
+    // Strip trailing slashes
+    const clean = url.replace(/\/$/, '');
+    
+    // Heuristic: 
+    // - Blogs usually live at /blog/feed or /feed
+    // - News sites often use /rss
+    if (clean.includes('blog')) return `${clean}/feed`;
+    
+    return `${clean}/feed`; // Default guess
+}
 
-    // Common WordPress/Ghost/CMS feed patterns
-    // You might want to make this smarter or scrape the HTML for <link rel="alternate"> tags in the future
-    return `${cleanUrl}/feed`; 
+/**
+ * Merges Trusted Overrides with the Global Knowledge Base
+ */
+function getAllSources() {
+    // 1. Convert Trusted Overrides to common format
+    const overrides = TRUSTED_OVERRIDES.map(s => ({
+        ...s,
+        category: 'media' as const,
+        region: 'GLOBAL' as const,
+        institution: undefined,
+        isOverride: true
+    }));
+
+    // 2. Process Knowledge Base
+    const kbSources = GLOBAL_SOURCES.map(s => {
+        // Check if we have an override for this source already
+        const hasOverride = overrides.find(o => 
+            o.name === s.name || o.url.includes(s.url)
+        );
+
+        if (hasOverride) return null; // Skip to avoid duplicates
+
+        return {
+            id: s.name.toLowerCase().replace(/[^a-z0-9]/g, '_'),
+            name: s.name,
+            url: guessFeedUrl(s.url), // Auto-append '/feed'
+            category: s.category,
+            region: s.region,
+            institution: s.institution,
+            isOverride: false
+        };
+    }).filter(Boolean) as any[]; // Filter out nulls
+
+    return [...overrides, ...kbSources];
 }
 
 export async function aggregateFeeds(): Promise<FeedItem[]> {
+    const allSources = getAllSources();
     const allItems: FeedItem[] = [];
+    
+    console.log(`[RSS] Fetching from ${allSources.length} sources...`);
 
-    // 2. Map Knowledge Base sources to Feed objects
-    // We exclude sources that are already in TRUSTED_FEEDS to avoid duplicates
-    const kbSources = GLOBAL_SOURCES.filter(k => 
-        !TRUSTED_FEEDS.some(t => t.url.includes(k.url) || t.name === k.name)
-    ).map(source => ({
-        id: source.name.toLowerCase().replace(/[^a-z0-9]/g, '_'),
-        name: source.name,
-        url: getProposedRssUrl(source.url), // Attempt to auto-fix the URL
-        category: source.category,
-        region: source.region,
-        institution: source.institution
-    }));
-
-    // Combine both lists
-    const combinedSources = [...TRUSTED_FEEDS, ...kbSources];
-
-    console.log(`Attempting to fetch from ${combinedSources.length} sources...`);
-
-    // Fetch in parallel
-    // Note: With 100+ sources, you might want to use p-limit to batch these 
-    // instead of firing 100 network requests simultaneously.
-    const promises = combinedSources.map(async (source) => {
+    // Fetch all feeds in parallel
+    // Note: In production, you might want to use p-limit to batch these if >100
+    const promises = allSources.map(async (source) => {
         try {
             const feed = await parser.parseURL(source.url);
             
+            if (!feed.items || feed.items.length === 0) return [];
+
             // Normalize items
-            const normalized: FeedItem[] = feed.items.map(item => ({
-                id: item.guid || item.link || Math.random().toString(),
+            return feed.items.slice(0, 5).map(item => ({
+                id: item.guid || item.link || Math.random().toString(36).substring(7),
                 title: item.title || 'Untitled',
                 link: item.link || '',
                 pubDate: item.pubDate || new Date().toISOString(),
-                contentSnippet: (item.contentSnippet || item.content || '').slice(0, 200) + '...',
+                contentSnippet: (item.contentSnippet || item.content || item.summary || '').slice(0, 200) + '...',
                 source: source.name,
-                isoDate: item.isoDate || new Date(item.pubDate || Date.now()).toISOString(),
-                // Add metadata
-                category: (source as any).category || 'general',
-                region: (source as any).region || 'GLOBAL',
-                institution: (source as any).institution
+                isoDate: item.isoDate || (item.pubDate ? new Date(item.pubDate).toISOString() : new Date().toISOString()),
+                // Metadata from Knowledge Base
+                category: source.category,
+                region: source.region,
+                institution: source.institution
             }));
 
-            return normalized.slice(0, 5); // Take top 5 from each
         } catch (e) {
-            // Silent fail is necessary here because many knowledge-base URLs won't have valid RSS feeds
-            // console.warn(`Skipping ${source.name} (${source.url}): No valid RSS feed found.`);
+            // Silent fail allows the aggregator to continue even if 50% of sources fail
+            // console.warn(`[RSS] Failed: ${source.name} (${source.url})`);
             return [];
         }
     });
 
-    const results = await Promise.all(promises);
+    const results = await Promise.allSettled(promises);
     
-    // Flatten
-    results.forEach(items => allItems.push(...items));
+    // Aggregate successful results
+    results.forEach(result => {
+        if (result.status === 'fulfilled' && Array.isArray(result.value)) {
+            allItems.push(...result.value);
+        }
+    });
 
     // Sort by date (newest first)
-    allItems.sort((a, b) => new Date(b.isoDate).getTime() - new Date(a.isoDate).getTime());
+    // We filter out invalid dates that might parse as NaN
+    allItems.sort((a, b) => {
+        const dateA = new Date(a.isoDate).getTime();
+        const dateB = new Date(b.isoDate).getTime();
+        return (isNaN(dateB) ? 0 : dateB) - (isNaN(dateA) ? 0 : dateA);
+    });
 
-    // Remove duplicates (sometimes different feeds pick up the same global news)
-    const uniqueItems = Array.from(new Map(allItems.map(item => [item.link, item])).values());
+    // Deduplicate items by link (some aggregators pick up the same press release)
+    const seenLinks = new Set();
+    const uniqueItems: FeedItem[] = [];
+    
+    for (const item of allItems) {
+        if (!seenLinks.has(item.link)) {
+            seenLinks.add(item.link);
+            uniqueItems.push(item);
+        }
+    }
 
     return uniqueItems;
 }
