@@ -9,11 +9,11 @@ import PdrViewer from '@/components/pdr/PdrViewer';
 import SmartDigest from '@/components/feed/SmartDigest';
 import StarField from '@/components/visualizer/StarField';
 import GalaxyLogo from '@/components/visualizer/GalaxyLogo';
-import { analyzePdrAction, getKnowledgeFeed } from './actions/analyze-pdr';
+import { analyzePdrAction, getKnowledgeFeed, askResearchContextAction, askFeedContextAction } from './actions/analyze-pdr';
 import { getUserHistory, saveResearchSession, deleteResearchSession, wipeUserHistory, ResearchProject } from './actions/history';
 import { Claim } from '@/types/research';
 import { GraphNode, GraphLink } from '@/types/graph';
-import { Sparkles, ArrowRight, Command, History, LogIn, User, Layers, Trash2, AlertTriangle, X, Check, FileText, Globe, Share, Download, Newspaper, Cpu, Rss, Copy } from 'lucide-react';
+import { Sparkles, ArrowRight, Command, History, LogIn, User, Layers, Trash2, Globe, Share, Download, Newspaper, Cpu, Rss, Copy, Send, Bot, MessageSquare, FileText } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
 import ReactMarkdown from 'react-markdown';
@@ -21,6 +21,74 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
+
+// --- CHAT COMPONENT ---
+function ResearchChat({ mode }: { mode: 'analysis' | 'feed' }) {
+  const [query, setQuery] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+
+  const handleAsk = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!query.trim()) return;
+    setLoading(true);
+    setAnswer(""); 
+    try {
+        let res;
+        if (mode === 'feed') {
+            res = await askFeedContextAction(query);
+        } else {
+            res = await askResearchContextAction(query);
+        }
+
+        if (res.success) setAnswer(res.answer);
+        else setAnswer("Error: " + res.answer);
+    } catch (err) { setAnswer("Failed to contact agent."); } 
+    finally { setLoading(false); }
+  };
+
+  if (!isOpen) {
+    return (
+        <button onClick={() => setIsOpen(true)} className="fixed bottom-6 right-6 p-4 bg-cyan-600 hover:bg-cyan-500 text-white rounded-full shadow-lg z-50 transition-all hover:scale-110">
+            <MessageSquare size={24} />
+        </button>
+    );
+  }
+
+  return (
+    <div className="fixed bottom-6 right-6 w-[400px] z-50 flex flex-col items-end animate-in slide-in-from-bottom-5 fade-in duration-200">
+      <button onClick={() => setIsOpen(false)} className="mb-2 mr-2 text-xs text-gray-500 hover:text-white">Close Chat</button>
+      <div className="w-full bg-[#050505] border border-white/10 rounded-xl shadow-2xl p-4 flex flex-col gap-4">
+          <div className="flex items-center gap-2 text-cyan-400 text-xs font-mono uppercase border-b border-white/5 pb-2">
+              <Bot size={14} /> {mode === 'feed' ? 'News Assistant' : 'Research Assistant'}
+          </div>
+          {answer && (
+            <div className="bg-white/5 p-3 rounded text-sm text-gray-300 max-h-[200px] overflow-y-auto leading-relaxed border border-white/5 custom-scrollbar">
+                {answer}
+            </div>
+          )}
+          <form onSubmit={handleAsk} className="relative">
+            <input 
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={mode === 'feed' ? "Ask about latest news..." : "Ask about the findings..."}
+              disabled={loading}
+              className="w-full bg-black border border-white/10 text-gray-100 pl-4 pr-10 py-2.5 rounded-lg text-sm focus:outline-none focus:border-cyan-500/50 placeholder:text-gray-600"
+            />
+            <button 
+                type="submit" 
+                disabled={loading}
+                className="absolute right-2 top-2 p-1 text-cyan-500 hover:text-white disabled:opacity-50"
+            >
+                {loading ? <Sparkles size={14} className="animate-spin" /> : <Send size={14} />}
+            </button>
+          </form>
+      </div>
+    </div>
+  );
+}
 
 export default function ClientHome() {
   const [mode, setMode] = useState<'input' | 'analysis' | 'feed'>('input');
@@ -119,7 +187,7 @@ export default function ClientHome() {
     <main className="h-screen w-screen flex flex-col overflow-hidden font-sans relative bg-[#020203] print:bg-white print:h-auto print:overflow-visible">
       <StarField />
 
-      {/* HEADER - HIDDEN IN PRINT */}
+      {/* HEADER */}
       <header className="h-14 flex shrink-0 items-center px-6 justify-between z-50 relative border-b border-white/5 bg-[#020203]/80 backdrop-blur-md print:hidden">
         <div className="flex items-center gap-3 cursor-pointer hover:opacity-80" onClick={() => setMode('input')}>
           <div className="w-2 h-2 bg-cyan-400 rounded-full shadow-[0_0_8px_rgba(34,211,238,1)]"></div>
@@ -150,7 +218,7 @@ export default function ClientHome() {
 
       <div className="flex-1 relative w-full h-full z-10 overflow-hidden flex print:h-auto print:overflow-visible">
 
-        {/* SIDEBAR - HIDDEN IN PRINT */}
+        {/* SIDEBAR */}
         {user && mode === 'input' && (
           <div className="w-64 h-full border-r border-white/10 bg-black/40 backdrop-blur-sm hidden lg:flex flex-col z-40 relative print:hidden">
             <div className="p-4 border-b border-white/10 text-[10px] font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2"><History size={12} /> Project History</div>
@@ -200,41 +268,21 @@ export default function ClientHome() {
           {/* FEED MODE */}
           {mode === 'feed' && (
             <div className="absolute inset-0 overflow-y-auto bg-[#0a0a0a] p-12 flex justify-center">
+              
+              {/* FEED CHAT WIDGET */}
+              <ResearchChat mode="feed" />
+
               <div className="max-w-4xl w-full">
                 <h2 className="text-2xl font-bold text-white mb-8 flex items-center gap-3"><Newspaper className="text-cyan-400" /> Global Knowledge Feed</h2>
 
                 <div className="flex items-center gap-3 py-4">
-                  {/* RSS Icon Button */}
-                  <a
-                    href="/feed/rss.xml"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-400 font-medium text-sm transition-all hover:scale-105"
-                  >
-                    <Rss className="w-4 h-4" />
-                    RSS Feed
+                  <a href="/feed/rss.xml" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 rounded-lg text-cyan-400 font-medium text-sm transition-all hover:scale-105">
+                    <Rss className="w-4 h-4" /> RSS Feed
                   </a>
-
-                  {/* Copy URL Button */}
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/feed/rss.xml`);
-                      // Optional: tiny toast feedback
-                      const btn = document.getElementById('copy-btn');
-                      if (btn) {
-                        const original = btn.textContent;
-                        btn.textContent = 'Copied!';
-                        setTimeout(() => (btn.textContent = original), 2000);
-                      }
-                    }}
-                    id="copy-btn"
-                    className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-gray-300 text-sm transition-all hover:scale-105"
-                  >
-                    <Copy className="w-4 h-4" />
-                    Copy URL
+                  <button onClick={() => navigator.clipboard.writeText(`${window.location.origin}/feed/rss.xml`)} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-gray-300 text-sm transition-all hover:scale-105">
+                    <Copy className="w-4 h-4" /> Copy URL
                   </button>
                 </div>
-
 
                 <div className="grid gap-4">
                   {knowledgeFeed.map((item, i) => (
@@ -255,8 +303,10 @@ export default function ClientHome() {
           {/* ANALYSIS MODE */}
           {mode === 'analysis' && (
             <div className="absolute inset-0 flex w-full h-full bg-black print:bg-white print:relative print:block print:h-auto">
+              
+              {/* ANALYSIS CHAT WIDGET */}
+              {mode === 'analysis' && <ResearchChat mode="analysis" />}
 
-              {/* Graph/Stream HIDDEN IN PRINT */}
               {viewTab === 'graph' && (
                 <>
                   <div className="w-[50%] h-full border-r border-white/10 bg-black/40 relative shrink-0 print:hidden"><ForceGraph key={claims.length} nodes={nodes} links={links} onNodeSelect={(n) => console.log(n)} /></div>
@@ -280,31 +330,26 @@ export default function ClientHome() {
                       </div>
                     </div>
 
-                    {/* MARKDOWN RENDERING WITH CUSTOM TECH CARDS */}
                     <div className="prose prose-invert prose-sm max-w-none print:prose-black">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm, remarkMath]}
                         rehypePlugins={[rehypeKatex]}
                         components={{
-                          a: (props) => <a {...props} className="text-cyan-400 hover:underline print:text-blue-600 print:no-underline" target="_blank" rel="noopener noreferrer" />,
-                          code: (props) => {
-                            const { children, className, ...rest } = props;
-                            const isInline = !String(children).includes('\n');
-                            return isInline
-                              ? <code {...rest} className="bg-white/10 px-1 py-0.5 rounded text-cyan-300 text-[0.9em] font-mono print:bg-gray-100 print:text-black">{children}</code>
-                              : <code {...rest} className="block bg-black/40 p-4 rounded border border-white/10 overflow-x-auto text-xs font-mono my-2 text-gray-300 print:bg-gray-50 print:text-black print:border-gray-200">{children}</code>;
+                          a: ({node, ...props}) => <a {...props} className="text-cyan-400 hover:underline print:text-blue-600 print:no-underline" target="_blank" rel="noopener noreferrer" />,
+                          code: ({node, inline, className, children, ...props}: any) => {
+                            const match = /language-(\w+)/.exec(className || '');
+                            return !inline ? (
+                                <code className="block bg-black/40 p-4 rounded border border-white/10 overflow-x-auto text-xs font-mono my-2 text-gray-300 print:bg-gray-50 print:text-black print:border-gray-200" {...props}>{children}</code>
+                            ) : (
+                                <code className="bg-white/10 px-1 py-0.5 rounded text-cyan-300 text-[0.9em] font-mono print:bg-gray-100 print:text-black" {...props}>{children}</code>
+                            );
                           },
-                          h1: (props) => <h1 {...props} className="text-3xl font-bold text-white mb-4 border-b border-white/10 pb-2 print:text-black print:border-black" />,
-                          h2: (props) => <h2 {...props} className="text-2xl font-bold text-gray-100 mt-8 mb-3 print:text-black" />,
-                          h3: (props) => <h3 {...props} className="text-xl font-bold text-gray-200 mt-6 mb-2 print:text-black" />,
-                          p: (props) => <p {...props} className="text-gray-300 leading-relaxed mb-4 print:text-black" />,
-
-                          // FIXED CUSTOM LI RENDERER
-                          li: (props) => {
-                            const { children, ...rest } = props;
+                          h1: ({node, ...props}) => <h1 {...props} className="text-3xl font-bold text-white mb-4 border-b border-white/10 pb-2 print:text-black print:border-black" />,
+                          h2: ({node, ...props}) => <h2 {...props} className="text-2xl font-bold text-gray-100 mt-8 mb-3 print:text-black" />,
+                          h3: ({node, ...props}) => <h3 {...props} className="text-xl font-bold text-gray-200 mt-6 mb-2 print:text-black" />,
+                          p: ({node, ...props}) => <p {...props} className="text-gray-300 leading-relaxed mb-4 print:text-black" />,
+                          li: ({node, children, ...props}) => {
                             const content = String(children);
-
-                            // Check if this list item contains our special marker
                             if (content.includes('🔹')) {
                               return (
                                 <li className="list-none my-3">
@@ -317,11 +362,11 @@ export default function ClientHome() {
                                 </li>
                               );
                             }
-                            return <li {...rest} className="text-gray-300 print:text-black">{children}</li>;
+                            return <li {...props} className="text-gray-300 print:text-black">{children}</li>;
                           },
-                          ul: (props) => <ul {...props} className="list-disc list-inside text-gray-300 space-y-1 mb-4 ml-4 print:text-black" />,
-                          ol: (props) => <ol {...props} className="list-decimal list-inside text-gray-300 space-y-1 mb-4 ml-4 print:text-black" />,
-                          blockquote: (props) => <blockquote {...props} className="border-l-2 border-cyan-500 pl-4 italic text-gray-400 my-4 print:text-gray-700 print:border-blue-500" />
+                          ul: ({node, ...props}) => <ul {...props} className="list-disc list-inside text-gray-300 space-y-1 mb-4 ml-4 print:text-black" />,
+                          ol: ({node, ...props}) => <ol {...props} className="list-decimal list-inside text-gray-300 space-y-1 mb-4 ml-4 print:text-black" />,
+                          blockquote: ({node, ...props}) => <blockquote {...props} className="border-l-2 border-cyan-500 pl-4 italic text-gray-400 my-4 print:text-gray-700 print:border-blue-500" />
                         }}
                       >
                         {unifiedReport}

@@ -41,7 +41,6 @@ export async function generateSmartDigest(userId: string, supabase: SupabaseClie
   // 2. Cluster Logic
   events.forEach(ev => {
     const title = ev.documents?.title || 'Unknown';
-    // Simple clustering by first word of title (naive but works for demo)
     const key = title.split(' ')[0] || 'General'; 
     if (!clusters.has(key)) clusters.set(key, []);
     clusters.get(key)?.push(ev);
@@ -57,5 +56,6 @@ export async function generateSmartDigest(userId: string, supabase: SupabaseClie
     });
   }
 
-  return results;
+  // Ensure plain object return
+  return JSON.parse(JSON.stringify(results));
 }

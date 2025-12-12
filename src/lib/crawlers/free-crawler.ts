@@ -9,12 +9,19 @@ export interface SearchResult {
   snippet: string;
 }
 
-// Environment variables should be loaded automatically in Next.js
+export interface CrawlResult {
+  url: string;
+  title: string;
+  markdown: string;
+  depth: number;
+}
+
 const SERPER_KEY = process.env.SERPER_API_KEY;
+const MAX_DEPTH = 1; // Limit depth to 1 for speed
+const MAX_PAGES_PER_QUERY = 5; // Safety limit
 
 /**
  * PRODUCTION METHOD 1: Serper.dev (Google Search API)
- * Best for production. Requires API key in .env.local
  */
 async function searchSerper(query: string): Promise<SearchResult[]> {
     if (!SERPER_KEY) return [];
@@ -47,15 +54,11 @@ async function searchSerper(query: string): Promise<SearchResult[]> {
 }
 
 /**
- * PRODUCTION METHOD 2: DuckDuckGo JSON API (No HTML Scraping)
- * Much more stable than HTML scraping.
- * Endpoint: https://api.duckduckgo.com/ (Instant Answer) or unofficial JSON endpoints
+ * PRODUCTION METHOD 2: DuckDuckGo JSON API
  */
 async function searchDuckDuckGoJSON(query: string): Promise<SearchResult[]> {
     console.log(`[Crawler] Using DDG Lite for: "${query}"`);
     try {
-        // We use the 'lite' version which is meant for low-bandwidth and easier to parse
-        // It is less likely to block than the main JS-heavy site.
         const url = `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`;
         const response = await fetch(url, {
              headers: {
@@ -71,13 +74,10 @@ async function searchDuckDuckGoJSON(query: string): Promise<SearchResult[]> {
         const $ = cheerio.load(html);
         const results: SearchResult[] = [];
 
-        // DDG Lite structure is table-based and very stable
         $('.result-link').each((i, elem) => {
             const anchor = $(elem);
             const title = anchor.text().trim();
             const rawUrl = anchor.attr('href');
-            
-            // The snippet is usually in the next row's .result-snippet class
             const snippet = anchor.closest('tr').next().find('.result-snippet').text().trim();
 
             if (title && rawUrl) {
@@ -94,68 +94,130 @@ async function searchDuckDuckGoJSON(query: string): Promise<SearchResult[]> {
     }
 }
 
-
 /**
  * Main Search Function
- * Prioritizes API keys, then falls back to robust scraping.
  */
 export async function searchWeb(query: string): Promise<SearchResult[]> {
-  // 1. Try Serper API (Official)
   if (SERPER_KEY) {
       const results = await searchSerper(query);
       if (results.length > 0) return results;
   }
-
-  // 2. Fallback to DDG Lite (Robust Scraping)
   const ddgResults = await searchDuckDuckGoJSON(query);
   if (ddgResults.length > 0) return ddgResults;
 
-  // 3. If all else fails, return error object (No Mock Data)
   return [{
       title: "SEARCH FAILED",
       url: "#error",
-      snippet: `Could not retrieve results for "${query}". Please check your internet connection or configure a SERPER_API_KEY in .env.local for reliable production usage.`
+      snippet: `Could not retrieve results for "${query}". Please check connection.`
   }];
 }
 
-export async function crawlUrl(url: string) {
-  // ... (Keep existing robust crawlUrl logic) ...
-  console.log(`[Crawler] Crawling: ${url}`);
-  if (url.startsWith('#error')) return { markdown: "" };
+/**
+ * Helper: Extract links from a page
+ */
+function extractLinks($: cheerio.CheerioAPI, baseUrl: string): string[] {
+    const links: string[] = [];
+    $('a[href]').each((_, el) => {
+        const href = $(el).attr('href');
+        if (href && !href.startsWith('#') && !href.startsWith('javascript:')) {
+            try {
+                const absoluteUrl = new URL(href, baseUrl).toString();
+                
+                // FILTER GARBAGE URLs
+                if (
+                    !absoluteUrl.includes('twitter.com') && 
+                    !absoluteUrl.includes('facebook.com') &&
+                    !absoluteUrl.includes('linkedin.com') &&
+                    !absoluteUrl.includes('sitemap') && // No Sitemaps
+                    !absoluteUrl.endsWith('.xml') &&
+                    !absoluteUrl.endsWith('.pdf') &&
+                    !absoluteUrl.endsWith('.zip')
+                ) {
+                    links.push(absoluteUrl);
+                }
+            } catch (e) {}
+        }
+    });
+    return [...new Set(links)].slice(0, 3); // Limit to 3 child links
+}
+
+/**
+ * POWER CRAWLER: Deep Recursive Crawling
+ */
+export async function deepCrawl(url: string, currentDepth: number = 0, visited: Set<string> = new Set()): Promise<CrawlResult[]> {
+  if (currentDepth > MAX_DEPTH || visited.has(url) || visited.size > MAX_PAGES_PER_QUERY) return [];
+  
+  // Early exit for bad URLs
+  if (url.startsWith('#error') || url.includes('sitemap') || url.endsWith('.xml')) return [];
+
+  visited.add(url);
+  console.log(`[DeepCrawl] Depth ${currentDepth}: ${url}`);
 
   try {
     const res = await fetch(url, { 
         headers: { 
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36' 
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5'
         },
-        signal: AbortSignal.timeout(8000), // 8s timeout per crawl
+        signal: AbortSignal.timeout(10000), // 10s timeout
         next: { revalidate: 3600 }
     });
     
-    if (!res.ok) return { markdown: "" };
+    if (!res.ok) return [];
     
+    // Check content type (don't parse binary/PDF)
+    const contentType = res.headers.get('content-type') || '';
+    if (!contentType.includes('text/html')) return [];
+
     const html = await res.text();
     const $ = cheerio.load(html);
     
+    // Cleanup
     $('script, style, nav, footer, iframe, svg, noscript, header, aside, .ads, .advertisement').remove();
     
     let text = "";
-    // Prefer article content
     const article = $('article, [role="main"], .main-content, #main-content, .post-content');
     if (article.length > 0) {
         text = article.text();
     } else {
         $('p, h1, h2, h3, h4, li').each((_, el) => {
-            text += $(el).text().trim() + " ";
+             text += $(el).text().trim() + " ";
         });
     }
+    text = text.replace(/\s+/g, ' ').trim().slice(0, 15000); 
 
-    text = text.replace(/\s+/g, ' ').trim().slice(0, 8000);
-    return { markdown: text };
+    const result: CrawlResult = {
+        url,
+        title: $('title').text() || url,
+        markdown: text,
+        depth: currentDepth
+    };
+
+    const results = [result];
+
+    // Recursive Step
+    if (currentDepth < MAX_DEPTH) {
+        const links = extractLinks($, url);
+        // Parallel crawl of children
+        const childPromises = links.map(link => deepCrawl(link, currentDepth + 1, visited));
+        const childResults = await Promise.all(childPromises);
+        childResults.forEach(r => results.push(...r));
+    }
+
+    return results;
   } catch (e) {
-    console.error(`[Crawler] Crawl failed for ${url}:`, e);
-    return { markdown: "" };
+    // Fail silently for crawl errors (don't crash the agent)
+    // console.error(`[DeepCrawl] Failed for ${url}:`, e); 
+    return [];
   }
 }
 
-export async function recursiveBranchCrawl(url: string, query: string, depth: number, limit: number) { return []; }
+export async function crawlUrl(url: string) {
+    const res = await deepCrawl(url, MAX_DEPTH); 
+    return { markdown: res[0]?.markdown || "" };
+}
+
+export async function recursiveBranchCrawl(url: string, query: string, depth: number, limit: number) {
+    return deepCrawl(url, 0); 
+}
