@@ -5,7 +5,7 @@
 
 import { createClient as createAdminClient } from '@supabase/supabase-js';
 import { ResearchAgent } from '@/lib/agents/research-agent';
-import { EvidenceItem, Claim } from '@/types/research';
+import type { EvidenceItem, Claim } from '@/types/research';
 import { aggregateFeeds } from '@/lib/feed/rss-aggregator';
 import { searchWeb, deepCrawl } from '@/lib/crawlers/free-crawler';
 import { fastSummarize, answerWithContext, writeBetterReport } from '@/lib/ai/fast-summarizer';
@@ -82,7 +82,10 @@ async function distillEvidenceForClaim(claimText: string, evidence: EvidenceItem
     `EVIDENCE (titles+urls+snippets):\n${
       (evidence || [])
         .slice(0, 8)
-        .map((e, i) => `(${i + 1}) ${e.title || 'Untitled'} | ${e.url}\n${(e.snippet || '').slice(0, 300)}`)
+        .map(
+          (e, i) =>
+            `(${i + 1}) ${e.title || 'Untitled'} | ${e.url}\n${String(e.snippet || '').slice(0, 300)}`
+        )
         .join('\n\n')
     }`,
     `SUMMARIES:\n${summaries.slice(0, 12000)}`,
@@ -239,22 +242,12 @@ function createAdminSupabase() {
 export async function runResearchJobAdmin(jobId: string) {
   const admin = createAdminSupabase();
 
-  const { data: job, error: jobFetchErr } = await admin
-    .from('research_jobs')
-    .select('*')
-    .eq('id', jobId)
-    .maybeSingle();
-
+  const { data: job, error: jobFetchErr } = await admin.from('research_jobs').select('*').eq('id', jobId).maybeSingle();
   if (jobFetchErr) throw jobFetchErr;
   if (!job) return { success: false, error: 'Job not found' };
   if (job.status === 'succeeded') return { success: true, alreadyDone: true, jobId };
 
-  // Mark running
-  const { error: runErr } = await admin
-    .from('research_jobs')
-    .update({ status: 'running', error: null })
-    .eq('id', jobId);
-
+  const { error: runErr } = await admin.from('research_jobs').update({ status: 'running', error: null }).eq('id', jobId);
   if (runErr) throw runErr;
 
   const pdrText = String(job.input_text || '').trim();
@@ -266,7 +259,6 @@ export async function runResearchJobAdmin(jobId: string) {
   try {
     const extracted = extractClaimsFromPdr(pdrText);
 
-    // Build claims. If none are extracted, fall back to a single claim = entire prompt.
     let claims: Claim[] = extracted.map((text, i) => ({
       id: `claim-${Date.now()}-${i}`,
       projectId: sessionId ?? 'unknown',
@@ -283,7 +275,6 @@ export async function runResearchJobAdmin(jobId: string) {
 
     if (claims.length === 0) {
       if (!pdrText) {
-        // If somehow empty got queued, succeed with a minimal payload instead of failing.
         const resultPayload = {
           claims: [],
           unifiedReport: 'No input text provided.',
@@ -372,7 +363,6 @@ export async function runResearchJobAdmin(jobId: string) {
     const uniqueSources = Array.from(new Map(allSources.map((s) => [s.url, s])).values());
     const unifiedReport = await generateExecutiveReport(pdrText, distilledBlocks.join('\n\n'), uniqueSources);
 
-    // Save context with admin client (no cookies)
     if (sessionId && userId) {
       await admin.from('research_contexts').insert({
         user_id: userId,
@@ -401,15 +391,17 @@ export async function runResearchJobAdmin(jobId: string) {
       .eq('id', jobId);
 
     if (doneErr) throw doneErr;
-
     return { success: true, jobId, result: resultPayload };
   } catch (err: any) {
     const message = String(err?.message || err || 'Unknown error');
 
-    await admin.from('research_jobs').update({ status: 'failed', error: message }).eq('id', jobId);
+    await createAdminSupabase().from('research_jobs').update({ status: 'failed', error: message }).eq('id', jobId);
 
     if (sessionId) {
-      await admin.from('research_sessions').update({ metadata: { status: 'failed', error: message } }).eq('id', sessionId);
+      await createAdminSupabase()
+        .from('research_sessions')
+        .update({ metadata: { status: 'failed', error: message } })
+        .eq('id', sessionId);
     }
 
     return { success: false, jobId, error: message };
@@ -417,7 +409,7 @@ export async function runResearchJobAdmin(jobId: string) {
 }
 
 // ---------------------------
-// The rest of your actions (unchanged)
+// The rest of your actions
 // ---------------------------
 export async function askBranchContextAction(branchId: string, question: string) {
   const { supabase, user } = await requireUser();
@@ -550,9 +542,13 @@ Return:
 
 export async function getKnowledgeFeed() {
   try {
-    const rawFeedItems = await aggregateFeeds();
-    const feedItems = rawFeedItems.map((item) => ({
-      id: String(item.id),
+    const rawFeedItems = await aggregateFeeds().catch((e) => {
+      console.error('aggregateFeeds() failed:', e);
+      return [];
+    });
+
+    const feedItems = (rawFeedItems || []).map((item: any) => ({
+      id: String(item.id ?? item.link ?? (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`)),
       title: String(item.title || 'Untitled'),
       link: String(item.link || '#'),
       contentSnippet: String(item.contentSnippet || ''),
@@ -566,22 +562,44 @@ export async function getKnowledgeFeed() {
     const plainFeed = JSON.parse(JSON.stringify(feedItems));
     return { success: true, feed: plainFeed, timestamp: new Date().toISOString() };
   } catch (e) {
-    console.error('Feed aggregation failed:', e);
+    console.error('Feed aggregation failed (outer):', e);
     return { success: false, feed: [], error: 'Failed to load feed' };
   }
 }
 
+/**
+ * UPDATED: includes isoDate in the context and instructs the model how to answer "today".
+ */
 export async function askFeedContextAction(question: string) {
   try {
     const res: any = await getKnowledgeFeed();
-    const feed = res.feed || [];
+    const feed = (res?.feed || []) as any[];
+
+    const todayISO = new Date().toISOString().slice(0, 10);
 
     const feedContext = feed
-      .slice(0, 25)
-      .map((item: any) => `Title: ${item.title}\nSource: ${item.source}\nSnippet: ${item.contentSnippet}\nLink: ${item.link}\n---`)
+      .slice(0, 30)
+      .map((item) => {
+        const date = item?.isoDate ? new Date(item.isoDate).toISOString() : 'unknown-date';
+        return [
+          `Date: ${date}`,
+          `Title: ${String(item?.title ?? '')}`,
+          `Source: ${String(item?.source ?? '')}`,
+          `Snippet: ${String(item?.contentSnippet ?? '')}`,
+          `Link: ${String(item?.link ?? '')}`,
+          `---`,
+        ].join('\n');
+      })
       .join('\n');
 
-    const answer = await answerWithContext(question, `RECENT NEWS FEED:\n${feedContext}`);
+    const systemHint = [
+      `You are a News Assistant.`,
+      `If the user asks "what happened today", interpret "today" as ${todayISO}.`,
+      `Prefer items whose Date starts with ${todayISO}.`,
+      `If there are no items from today, say so and list the most recent items with their dates.`,
+    ].join('\n');
+
+    const answer = await answerWithContext(question, `${systemHint}\n\nRECENT NEWS FEED:\n${feedContext}`);
     return { success: true, answer };
   } catch (e) {
     console.error('Feed Chat Failed:', e);

@@ -1,29 +1,30 @@
 // ============================================================================
 // FILE: next.config.ts
 // ============================================================================
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
-  // React Strict Mode enables double-invocation of effects in dev to catch bugs early,
-  // crucial for complex graph state logic.
   reactStrictMode: true,
 
-  // Image optimization configuration.
-  // Allowing external domains commonly used for research/profile images if needed later.
   images: {
     remotePatterns: [
       {
-        protocol: "https",
-        hostname: "**",
+        protocol: 'https',
+        hostname: '**',
       },
     ],
   },
 
-  // Next.js 15 experimental flags or specific rewrites can go here.
-  // Currently keeping standard configuration for Vercel deployment compatibility.
   experimental: {
-    // optimizedPackageImports helps with heavy libraries like visualizers
-    optimizePackageImports: ["@supabase/supabase-js", "lucide-react"],
+    optimizePackageImports: ['@supabase/supabase-js', 'lucide-react'],
+
+    serverActions: {
+      allowedOrigins: [
+        'localhost:3000',
+        '127.0.0.1:3000',
+        '192.168.1.233:3000', // your LAN URL shown in the dev server output
+      ],
+    },
   },
 };
 

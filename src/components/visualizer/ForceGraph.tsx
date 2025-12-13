@@ -15,6 +15,65 @@ interface ForceGraphProps {
   onNodeSelect?: (node: GraphNode) => void;
 }
 
+function getNodeUrl(node: GraphNode): string | null {
+  const url =
+    node.seedUrl ||
+    (node.meta?.url ? String(node.meta.url) : null) ||
+    (typeof node.id === 'string' && node.id.startsWith('http') ? node.id : null);
+
+  return url && url.startsWith('http') ? url : null;
+}
+
+function escHtml(s: string) {
+  return s.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+function tooltipHtmlForNode(node: GraphNode) {
+  const url = getNodeUrl(node) || '';
+  const title =
+    (node.meta?.title ? String(node.meta.title) : '') ||
+    node.label ||
+    (node.type === 'document' ? 'Source' : 'Node');
+
+  const snippet = node.meta?.snippet ? String(node.meta.snippet) : '';
+
+  // Keep tooltip compact; long snippets can be annoying.
+  const snip = snippet.length > 240 ? `${snippet.slice(0, 240)}…` : snippet;
+
+  // Only show rich tooltip if we have something useful
+  if (!title && !url && !snip) return '';
+
+  return `
+    <div style="
+      max-width: 360px;
+      padding: 10px 10px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.92);
+      color: rgba(255,255,255,0.92);
+      border-radius: 10px;
+      font-size: 12px;
+      line-height: 1.25;
+    ">
+      <div style="font-weight: 700; margin-bottom: 6px;">${escHtml(title)}</div>
+      ${
+        url
+          ? `<div style="opacity: 0.85; font-size: 11px; margin-bottom: 8px; word-break: break-all;">${escHtml(url)}</div>`
+          : ''
+      }
+      ${
+        snip
+          ? `<div style="opacity: 0.9;">${escHtml(snip)}</div>`
+          : ''
+      }
+      ${
+        node.type === 'document'
+          ? `<div style="opacity: 0.6; font-size: 10px; margin-top: 10px;">Shift+Click or Right‑Click to open</div>`
+          : ''
+      }
+    </div>
+  `;
+}
+
 export default function ForceGraph({ nodes, links, onNodeSelect }: ForceGraphProps) {
   const [dimensions, setDimensions] = useState({ w: 800, h: 600 });
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -60,23 +119,29 @@ export default function ForceGraph({ nodes, links, onNodeSelect }: ForceGraphPro
         nodeColor={(n: any) => nodeColor(n as GraphNode)}
         linkColor={() => '#333333'}
         linkWidth={1}
-        onNodeClick={(n: any) => {
+        nodeLabel={(n: any) => tooltipHtmlForNode(n as GraphNode)}
+        onNodeClick={(n: any, event: MouseEvent) => {
           const node = n as GraphNode;
 
-          // Open URL if it's a document, but still select it (so Dive Deeper modal can open)
-          if (node.type === 'document') {
-            const url =
-              node.seedUrl ||
-              (node.meta?.url ? String(node.meta.url) : null) ||
-              (node.id.startsWith('http') ? node.id : null);
+          // Click selects only (no auto-open).
+          onNodeSelect?.(node);
 
+          // Explicit open action: Shift + click.
+          if (event?.shiftKey && node.type === 'document') {
+            const url = getNodeUrl(node);
             if (url) window.open(url, '_blank');
           }
+        }}
+        onNodeRightClick={(n: any) => {
+          const node = n as GraphNode;
+          if (node.type !== 'document') return;
 
-          onNodeSelect?.(node);
+          const url = getNodeUrl(node);
+          if (url) window.open(url, '_blank');
         }}
         nodeCanvasObject={(n: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
           const node = n as GraphNode & { x: number; y: number };
+
           const label = node.label || '';
           const fontSize = 12 / globalScale;
           const radius = node.type === 'claim' ? 4 : 2 + ((node.confidence || 0.5) * 3);

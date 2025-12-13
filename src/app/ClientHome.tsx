@@ -44,7 +44,6 @@ import {
   Share,
   Download,
   Newspaper,
-  Cpu,
   Rss,
   Copy,
   Send,
@@ -278,7 +277,11 @@ export default function ClientHome() {
           branchId: rootBranch,
           parentNodeId: claimNodeId,
           seedUrl: url,
-          meta: { url },
+          meta: {
+            url,
+            title: ev.title || null,
+            snippet: ev.snippet || null,
+          },
         });
 
         newLinks.push({
@@ -474,7 +477,28 @@ export default function ClientHome() {
       const deltaNodes: GraphNode[] = res.graphDelta?.nodes || [];
       const deltaLinks: GraphLink[] = res.graphDelta?.links || [];
 
-      setGraphNodes((prev) => Array.from(new Map([...prev, ...deltaNodes].map((n) => [n.id, n])).values()));
+      // Ensure doc nodes have meta.url for consistent tooltip/open behavior
+      const normalizedDeltaNodes: GraphNode[] = (deltaNodes || []).map((n: any) => {
+        if (n?.type !== 'document') return n;
+
+        const url =
+          n.seedUrl ||
+          (n.meta?.url ? String(n.meta.url) : null) ||
+          (String(n.id || '').startsWith('http') ? String(n.id) : null);
+
+        return {
+          ...n,
+          seedUrl: url || n.seedUrl,
+          meta: {
+            ...(n.meta || {}),
+            url: url || (n.meta?.url ?? null),
+            title: n.meta?.title ?? null,
+            snippet: n.meta?.snippet ?? null,
+          },
+        };
+      });
+
+      setGraphNodes((prev) => Array.from(new Map([...prev, ...normalizedDeltaNodes].map((n) => [n.id, n])).values()));
       setGraphLinks((prev) => [...prev, ...deltaLinks]);
 
       setBranchIds((prev) => (prev.includes(branchId) ? prev : [branchId, ...prev]));
@@ -665,9 +689,7 @@ export default function ClientHome() {
                     <button
                       onClick={() => setDeepMode(!deepMode)}
                       className={`flex items-center gap-2 px-3 py-1.5 rounded text-[10px] font-mono uppercase border transition-all ${
-                        deepMode
-                          ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400'
-                          : 'bg-transparent border-white/10 text-gray-500'
+                        deepMode ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400' : 'bg-transparent border-white/10 text-gray-500'
                       }`}
                     >
                       <Layers size={12} />
@@ -729,7 +751,7 @@ export default function ClientHome() {
               </div>
 
               <div className="grid gap-4">
-                {knowledgeFeed.map((item, i) => (
+                {knowledgeFeed.map((item: any, i) => (
                   <div key={i} className="p-6 bg-white/5 rounded-lg border border-white/5 hover:border-cyan-500/30 transition-colors">
                     <a
                       href={item.link}
@@ -739,6 +761,13 @@ export default function ClientHome() {
                     >
                       {item.title || 'Untitled Entry'}
                     </a>
+
+                    {item.isoDate && (
+                      <div className="text-[10px] text-gray-500 font-mono mt-2 uppercase">
+                        {new Date(item.isoDate).toLocaleString()}
+                      </div>
+                    )}
+
                     <p className="text-sm text-gray-400 mt-2 leading-relaxed">{item.contentSnippet}</p>
                   </div>
                 ))}
@@ -844,14 +873,11 @@ export default function ClientHome() {
                           <h3 {...props} className="text-xl font-bold text-gray-200 mt-6 mb-2 print:text-black" />
                         ),
                         p: ({ node, ...props }) => <p {...props} className="text-gray-300 leading-relaxed mb-4 print:text-black" />,
-                        li: ({ node, children, ...props }) => {
-                          // keep your custom LI behavior if you had one; default to simple
-                          return (
-                            <li {...props} className="text-gray-300 print:text-black">
-                              {children}
-                            </li>
-                          );
-                        },
+                        li: ({ node, children, ...props }) => (
+                          <li {...props} className="text-gray-300 print:text-black">
+                            {children}
+                          </li>
+                        ),
                         ul: ({ node, ...props }) => (
                           <ul {...props} className="list-disc list-inside text-gray-300 space-y-1 mb-4 ml-4 print:text-black" />
                         ),
