@@ -250,10 +250,14 @@ export async function runResearchJobAdmin(jobId: string) {
   if (job.status === 'succeeded') return { success: true, alreadyDone: true, jobId };
 
   // Mark running
-  const { error: runErr } = await admin.from('research_jobs').update({ status: 'running', error: null }).eq('id', jobId);
+  const { error: runErr } = await admin
+    .from('research_jobs')
+    .update({ status: 'running', error: null })
+    .eq('id', jobId);
+
   if (runErr) throw runErr;
 
-  const pdrText = String(job.input_text || '');
+  const pdrText = String(job.input_text || '').trim();
   const deepMode = Boolean(job.deep_mode);
   const breadth = Number(job.breadth || 3);
   const sessionId = job.session_id ? String(job.session_id) : null;
@@ -262,7 +266,8 @@ export async function runResearchJobAdmin(jobId: string) {
   try {
     const extracted = extractClaimsFromPdr(pdrText);
 
-    const claims: Claim[] = extracted.map((text, i) => ({
+    // Build claims. If none are extracted, fall back to a single claim = entire prompt.
+    let claims: Claim[] = extracted.map((text, i) => ({
       id: `claim-${Date.now()}-${i}`,
       projectId: sessionId ?? 'unknown',
       text,
@@ -276,7 +281,42 @@ export async function runResearchJobAdmin(jobId: string) {
       biasStatus: 'balanced',
     }));
 
-    if (claims.length === 0) throw new Error('No valid claims found');
+    if (claims.length === 0) {
+      if (!pdrText) {
+        // If somehow empty got queued, succeed with a minimal payload instead of failing.
+        const resultPayload = {
+          claims: [],
+          unifiedReport: 'No input text provided.',
+          sources: [],
+          stats: { totalClaims: 0, processed: 0 },
+          sessionId,
+        };
+
+        const { error: doneErr } = await admin
+          .from('research_jobs')
+          .update({ status: 'succeeded', result: resultPayload, error: null })
+          .eq('id', jobId);
+
+        if (doneErr) throw doneErr;
+        return { success: true, jobId, result: resultPayload };
+      }
+
+      claims = [
+        {
+          id: `claim-${Date.now()}-fallback`,
+          projectId: sessionId ?? 'unknown',
+          text: pdrText,
+          domain: 'research',
+          type: 'empirical',
+          verdict: 'unknown',
+          confidence: 0,
+          tags: ['fallback-claim'],
+          linkedDocumentIds: [],
+          evidence: [],
+          biasStatus: 'balanced',
+        },
+      ];
+    }
 
     const results: Claim[] = [];
     const allSources: any[] = [];

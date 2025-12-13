@@ -45,6 +45,8 @@ create policy "Authenticated users can insert documents"
 on public.documents for insert to authenticated
 with check (true);
 
+create index if not exists idx_documents_domain on public.documents(domain);
+
 -- ============================================================================
 -- RESEARCH SESSIONS
 -- ============================================================================
@@ -80,6 +82,7 @@ on public.research_sessions for delete to authenticated
 using ((select auth.uid()) = user_id);
 
 create index if not exists idx_sessions_user on public.research_sessions(user_id);
+create index if not exists idx_sessions_created_at on public.research_sessions(created_at);
 
 -- ============================================================================
 -- RESEARCH CONTEXTS
@@ -114,6 +117,7 @@ with check ((select auth.uid()) = user_id);
 
 create index if not exists idx_research_contexts_user on public.research_contexts(user_id);
 create index if not exists idx_research_contexts_session on public.research_contexts(session_id);
+create index if not exists idx_research_contexts_updated_at on public.research_contexts(updated_at);
 
 drop trigger if exists trg_research_contexts_updated_at on public.research_contexts;
 create trigger trg_research_contexts_updated_at
@@ -166,6 +170,7 @@ with check ((select auth.uid()) = user_id);
 create index if not exists idx_research_branches_user on public.research_branches(user_id);
 create index if not exists idx_research_branches_session on public.research_branches(session_id);
 create index if not exists idx_research_branches_branchid on public.research_branches(branch_id);
+create index if not exists idx_research_branches_updated_at on public.research_branches(updated_at);
 
 drop trigger if exists trg_research_branches_updated_at on public.research_branches;
 create trigger trg_research_branches_updated_at
@@ -209,6 +214,7 @@ with check ((select auth.uid()) = user_id);
 
 create index if not exists idx_research_jobs_user on public.research_jobs(user_id);
 create index if not exists idx_research_jobs_status on public.research_jobs(status);
+create index if not exists idx_research_jobs_created_at on public.research_jobs(created_at);
 
 drop trigger if exists trg_research_jobs_updated_at on public.research_jobs;
 create trigger trg_research_jobs_updated_at
@@ -240,3 +246,4 @@ on public.update_events for insert to authenticated
 with check ((select auth.uid()) = user_id);
 
 create index if not exists idx_update_events_user on public.update_events(user_id);
+create index if not exists idx_update_events_created_at on public.update_events(created_at);
