@@ -3,33 +3,37 @@
 // ============================================================================
 import { ResearchDomain } from './research';
 
-// Visualizer-specific node interface
-// Implements the minimal attributes required for the ForceGraph/Cosmograph
+export type GraphDomain = ResearchDomain | 'other' | 'external' | 'branch';
+
 export interface GraphNode {
   id: string;
-  label: string; // Usually document title or truncated claim text
-  
-  // Metrics for visual encoding
-  confidence: number; // 0–1, maps to radius and brightness
-  degree: number;     // Number of connections, used for initial layout gravity
-  
-  // State flags
-  isStarred: boolean; // Acts as gravity well if true
-  isRead: boolean;    // Determines the red-tint overlay
-  
-  // Categorical data for coloring
-  domain: ResearchDomain | 'other'; 
+  label: string;
+
+  confidence: number;
+  degree: number;
+
+  isStarred: boolean;
+  isRead: boolean;
+
+  domain: GraphDomain;
   tags: string[];
-  
-  // Optional reference to original data
+
   originalId?: string;
   type: 'claim' | 'document';
+
+  // Optional branch metadata
+  branchId?: string;
+  parentNodeId?: string;
+  seedUrl?: string;
+  meta?: Record<string, any>;
 }
 
 export interface GraphLink {
-  source: string; // Node ID
-  target: string; // Node ID
-  strength: number; // 0-1, derived from semantic similarity
+  source: string;
+  target: string;
+  strength: number;
+
+  branchId?: string;
 }
 
 export interface GraphData {
