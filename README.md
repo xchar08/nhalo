@@ -127,7 +127,7 @@ Developers can access Halo programmatically via the `v1` REST API.
 
 **Start a Job** (`POST /research`)
 ```bash
-curl -X POST http://localhost:3000/api/v1/research \
+curl -X POST http://nhalo.vercel.app/api/v1/research \
   -H "Authorization: Bearer sk_halo_..." \
   -H "Content-Type: application/json" \
   -d '{
@@ -139,7 +139,7 @@ curl -X POST http://localhost:3000/api/v1/research \
 
 **Get Results** (`GET /research/:jobId`)
 ```bash
-curl -X GET http://localhost:3000/api/v1/research/JOB_ID_HERE \
+curl -X GET http://nhalo.vercel.app/api/v1/research/JOB_ID_HERE \
   -H "Authorization: Bearer sk_halo_..."
 ```
 *Returns `status: "succeeded"` and a full Markdown report when done.*
@@ -152,7 +152,7 @@ Investigate a specific node, claim, or sub-topic from an existing research sessi
 
 **Start Deep Dive** (`POST /research/deep`)
 ```bash
-curl -X POST http://localhost:3000/api/v1/research/deep \
+curl -X POST http://nhalo.vercel.app/api/v1/research/deep \
   -H "Authorization: Bearer sk_halo_..." \
   -H "Content-Type: application/json" \
   -d '{
@@ -167,7 +167,7 @@ curl -X POST http://localhost:3000/api/v1/research/deep \
 
 **Get Branch Report** (`GET /research/deep/:branchId`)
 ```bash
-curl -X GET http://localhost:3000/api/v1/research/deep/BRANCH_ID_HERE \
+curl -X GET http://nhalo.vercel.app/api/v1/research/deep/BRANCH_ID_HERE \
   -H "Authorization: Bearer sk_halo_..."
 ```
 
