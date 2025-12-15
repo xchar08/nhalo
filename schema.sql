@@ -1,5 +1,5 @@
 -- ============================================================================
--- schema.sql (SAFE TO COMMIT)
+-- schema.sql (COMPLETE & UPDATED)
 -- Extensions + tables + RLS/policies + triggers + indexes
 -- ============================================================================
 
@@ -20,6 +20,32 @@ begin
   return new;
 end;
 $$ language plpgsql;
+
+
+-- ============================================================================
+-- API KEYS (NEW: For External API Access)
+-- ============================================================================
+create table if not exists public.api_keys (
+  id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  key_hash text not null, -- Stores the secure key (or hash)
+  label text,             -- e.g. "My production app"
+  last_used_at timestamptz,
+  created_at timestamptz default now()
+);
+
+alter table public.api_keys enable row level security;
+
+-- Users can only see and manage their own keys
+drop policy if exists "Users can manage own api_keys" on public.api_keys;
+create policy "Users can manage own api_keys"
+on public.api_keys for all to authenticated
+using ((select auth.uid()) = user_id)
+with check ((select auth.uid()) = user_id);
+
+-- Index for fast authentication lookup
+create index if not exists idx_api_keys_key on public.api_keys(key_hash);
+create index if not exists idx_api_keys_user on public.api_keys(user_id);
 
 
 -- ============================================================================
@@ -255,6 +281,7 @@ with check ((select auth.uid()) = user_id);
 create index if not exists idx_update_events_user on public.update_events(user_id);
 create index if not exists idx_update_events_created_at on public.update_events(created_at);
 
+
 -- ============================================================================
 -- ONTOLOGY SYSTEM (Concepts, Entities, Taggings)
 -- ============================================================================
@@ -292,7 +319,7 @@ alter table public.entities add constraint unique_entity_name_type unique (name,
 -- C) Taggings (Polymorphic Link)
 create table if not exists public.taggings (
   id uuid primary key default uuid_generate_v4(),
-  target_id uuid not null, -- The research_job.id
+  target_id uuid not null, -- The research_job.id or research_session.id
   target_type text not null, -- 'job', 'doc', 'session'
   concept_id uuid references public.concepts(id),
   entity_id uuid references public.entities(id),

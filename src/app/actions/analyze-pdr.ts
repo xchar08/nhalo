@@ -11,7 +11,7 @@ import { searchWeb, deepCrawl } from '@/lib/crawlers/free-crawler';
 import { fastSummarize, answerWithContext, writeBetterReport } from '@/lib/ai/fast-summarizer';
 import { getAcademicSeedTargets } from '@/lib/config/academic-seeds';
 import { createClient } from '@/lib/supabase/server';
-import { autoTagJob } from '@/lib/agents/auto-tagger'; // <--- NEW IMPORT
+import { autoTagJob } from '@/lib/agents/auto-tagger';
 
 // ---------------------------
 // Helpers
@@ -134,13 +134,11 @@ Constraints:
 }
 
 // ---------------------------
-// User-scoped (UI)
+// User-scoped (UI) - REQUIRES COOKIES
 // ---------------------------
 async function requireUser() {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) throw new Error('Unauthorized');
   return { supabase, user };
@@ -166,9 +164,7 @@ export async function analyzePdrAction(pdrText: string, deepMode: boolean = fals
   if (!pdrText.trim()) return { success: false, error: 'Empty text' };
 
   const { supabase, user } = await requireUser();
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const academicSeeds = getAcademicSeedTargets();
-
+  
   const { data: sessionRow, error: sessionErr } = await supabase
     .from('research_sessions')
     .insert({
@@ -222,204 +218,6 @@ export async function askResearchContextAction(question: string) {
   return { success: true, answer };
 }
 
-// ---------------------------
-// Admin-scoped (cron/worker)
-// ---------------------------
-function requireAdminEnv() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url) throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL');
-  if (!serviceKey) throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY');
-
-  return { url, serviceKey };
-}
-
-function createAdminSupabase() {
-  const { url, serviceKey } = requireAdminEnv();
-  return createAdminClient(url, serviceKey);
-}
-
-export async function runResearchJobAdmin(jobId: string) {
-  const admin = createAdminSupabase();
-
-  const { data: job, error: jobFetchErr } = await admin.from('research_jobs').select('*').eq('id', jobId).maybeSingle();
-  if (jobFetchErr) throw jobFetchErr;
-  if (!job) return { success: false, error: 'Job not found' };
-  if (job.status === 'succeeded') return { success: true, alreadyDone: true, jobId };
-
-  const { error: runErr } = await admin.from('research_jobs').update({ status: 'running', error: null }).eq('id', jobId);
-  if (runErr) throw runErr;
-
-  const pdrText = String(job.input_text || '').trim();
-  const deepMode = Boolean(job.deep_mode);
-  const breadth = Number(job.breadth || 3);
-  const sessionId = job.session_id ? String(job.session_id) : null;
-  const userId = String(job.user_id || '');
-
-  try {
-    const extracted = extractClaimsFromPdr(pdrText);
-
-    let claims: Claim[] = extracted.map((text, i) => ({
-      id: `claim-${Date.now()}-${i}`,
-      projectId: sessionId ?? 'unknown',
-      text,
-      domain: 'research',
-      type: 'empirical',
-      verdict: 'unknown',
-      confidence: 0,
-      tags: [],
-      linkedDocumentIds: [],
-      evidence: [],
-      biasStatus: 'balanced',
-    }));
-
-    if (claims.length === 0) {
-      if (!pdrText) {
-        const resultPayload = {
-          claims: [],
-          unifiedReport: 'No input text provided.',
-          sources: [],
-          stats: { totalClaims: 0, processed: 0 },
-          sessionId,
-        };
-
-        const { error: doneErr } = await admin
-          .from('research_jobs')
-          .update({ status: 'succeeded', result: resultPayload, error: null })
-          .eq('id', jobId);
-
-        if (doneErr) throw doneErr;
-        return { success: true, jobId, result: resultPayload };
-      }
-
-      claims = [
-        {
-          id: `claim-${Date.now()}-fallback`,
-          projectId: sessionId ?? 'unknown',
-          text: pdrText,
-          domain: 'research',
-          type: 'empirical',
-          verdict: 'unknown',
-          confidence: 0,
-          tags: ['fallback-claim'],
-          linkedDocumentIds: [],
-          evidence: [],
-          biasStatus: 'balanced',
-        },
-      ];
-    }
-
-    const results: Claim[] = [];
-    const allSources: any[] = [];
-    let fullResearchContext = `Original Request: ${pdrText}\n\n`;
-    const distilledBlocks: string[] = [];
-
-    for (const claim of claims) {
-      try {
-        const queries = deepMode ? generateSubQueries(claim.text) : [claim.text];
-
-        const searchResultsNested = await Promise.all(queries.map((q) => searchWeb(q)));
-        const searchResults = searchResultsNested.flat();
-
-        const uniqueUrls = [...new Set(searchResults.map((r) => r.url))]
-          .filter((u) => !!u && u !== '#error')
-          .slice(0, deepMode ? Math.min(8, Math.max(3, breadth * 2)) : breadth);
-
-        const crawlResults = (await Promise.all(uniqueUrls.map((url) => deepCrawl(url, 0)))).flat();
-
-        const summaries = await mapAsync(crawlResults, 3, async (p) => {
-          await new Promise((r) => setTimeout(r, 120));
-          return fastSummarize(p.markdown, claim.text);
-        });
-
-        const richContext = summaries.join('\n\n');
-        fullResearchContext += `\n\n### Claim: ${claim.text}\n${richContext}`;
-
-        const agentResult = await new ResearchAgent(claim, { deepSearch: deepMode, breadth }).run();
-        const { claim: resultClaim } = agentResult;
-
-        results.push(resultClaim);
-
-        if (resultClaim.evidence) {
-          allSources.push(
-            ...resultClaim.evidence.map((e) => ({
-              url: e.url,
-              title: e.title || e.url,
-              snippet: e.snippet,
-              score: e.confidenceScore,
-            }))
-          );
-
-          const distilled = await distillEvidenceForClaim(claim.text, resultClaim.evidence || [], richContext);
-          distilledBlocks.push(`## Claim: ${claim.text}\n${distilled}\n`);
-        }
-      } catch (e) {
-        console.error('Agent failed for claim:', claim.id, e);
-        results.push(claim);
-        distilledBlocks.push(`## Claim: ${claim.text}\n- Distillation failed; insufficient evidence gathered.\n`);
-      }
-    }
-
-    const uniqueSources = Array.from(new Map(allSources.map((s) => [s.url, s])).values());
-    const unifiedReport = await generateExecutiveReport(pdrText, distilledBlocks.join('\n\n'), uniqueSources);
-
-    // ========================================================================
-    // NEW: Auto-tag the job (Ontology Extraction)
-    // ========================================================================
-    await autoTagJob(jobId, unifiedReport).catch((err) => {
-      console.error('Auto-tagging failed:', err);
-    });
-    // ========================================================================
-
-    if (sessionId && userId) {
-      await admin.from('research_contexts').insert({
-        user_id: userId,
-        session_id: sessionId,
-        prompt: pdrText,
-        context: fullResearchContext,
-      });
-
-      await admin
-        .from('research_sessions')
-        .update({ metadata: { claim_count: results.length, status: 'succeeded' } })
-        .eq('id', sessionId);
-    }
-
-    const resultPayload = {
-      claims: results,
-      unifiedReport,
-      sources: uniqueSources,
-      stats: { totalClaims: claims.length, processed: results.length },
-      sessionId,
-    };
-
-    const { error: doneErr } = await admin
-      .from('research_jobs')
-      .update({ status: 'succeeded', result: resultPayload, error: null })
-      .eq('id', jobId);
-
-    if (doneErr) throw doneErr;
-    return { success: true, jobId, result: resultPayload };
-  } catch (err: any) {
-    const message = String(err?.message || err || 'Unknown error');
-
-    await createAdminSupabase().from('research_jobs').update({ status: 'failed', error: message }).eq('id', jobId);
-
-    if (sessionId) {
-      await createAdminSupabase()
-        .from('research_sessions')
-        .update({ metadata: { status: 'failed', error: message } })
-        .eq('id', sessionId);
-    }
-
-    return { success: false, jobId, error: message };
-  }
-}
-
-// ---------------------------
-// The rest of your actions
-// ---------------------------
 export async function askBranchContextAction(branchId: string, question: string) {
   const { supabase, user } = await requireUser();
 
@@ -576,9 +374,6 @@ export async function getKnowledgeFeed() {
   }
 }
 
-/**
- * UPDATED: includes isoDate in the context and instructs the model how to answer "today".
- */
 export async function askFeedContextAction(question: string) {
   try {
     const res: any = await getKnowledgeFeed();
@@ -614,4 +409,234 @@ export async function askFeedContextAction(question: string) {
     console.error('Feed Chat Failed:', e);
     return { success: false, answer: 'Failed to analyze feed.' };
   }
+}
+
+// ---------------------------
+// Admin-scoped (Worker Logic - NO COOKIES)
+// ---------------------------
+function requireAdminEnv() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!url) throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL');
+  if (!serviceKey) throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY');
+
+  return { url, serviceKey };
+}
+
+function createAdminSupabase() {
+  const { url, serviceKey } = requireAdminEnv();
+  return createAdminClient(url, serviceKey);
+}
+
+// Called by Worker for Main Jobs
+export async function runResearchJobAdmin(jobId: string) {
+  const admin = createAdminSupabase();
+
+  const { data: job, error: jobFetchErr } = await admin.from('research_jobs').select('*').eq('id', jobId).maybeSingle();
+  if (jobFetchErr) throw jobFetchErr;
+  if (!job) return { success: false, error: 'Job not found' };
+  if (job.status === 'succeeded') return { success: true, alreadyDone: true, jobId };
+
+  const { error: runErr } = await admin.from('research_jobs').update({ status: 'running', error: null }).eq('id', jobId);
+  if (runErr) throw runErr;
+
+  const pdrText = String(job.input_text || '').trim();
+  const deepMode = Boolean(job.deep_mode);
+  const breadth = Number(job.breadth || 3);
+  const sessionId = job.session_id ? String(job.session_id) : null;
+  const userId = String(job.user_id || '');
+
+  try {
+    const extracted = extractClaimsFromPdr(pdrText);
+
+    let claims: Claim[] = extracted.map((text, i) => ({
+      id: `claim-${Date.now()}-${i}`,
+      projectId: sessionId ?? 'unknown',
+      text,
+      domain: 'research',
+      type: 'empirical',
+      verdict: 'unknown',
+      confidence: 0,
+      tags: [],
+      linkedDocumentIds: [],
+      evidence: [],
+      biasStatus: 'balanced',
+    }));
+
+    if (claims.length === 0) {
+      if (!pdrText) {
+        // Handle empty
+        const resultPayload = {
+          claims: [],
+          unifiedReport: 'No input text provided.',
+          sources: [],
+          stats: { totalClaims: 0, processed: 0 },
+          sessionId,
+        };
+        await admin.from('research_jobs').update({ status: 'succeeded', result: resultPayload, error: null }).eq('id', jobId);
+        return { success: true, jobId, result: resultPayload };
+      }
+
+      claims = [{
+        id: `claim-${Date.now()}-fallback`,
+        projectId: sessionId ?? 'unknown',
+        text: pdrText,
+        domain: 'research',
+        type: 'empirical',
+        verdict: 'unknown',
+        confidence: 0,
+        tags: ['fallback-claim'],
+        linkedDocumentIds: [],
+        evidence: [],
+        biasStatus: 'balanced',
+      }];
+    }
+
+    const results: Claim[] = [];
+    const allSources: any[] = [];
+    let fullResearchContext = `Original Request: ${pdrText}\n\n`;
+    const distilledBlocks: string[] = [];
+
+    for (const claim of claims) {
+      try {
+        const queries = deepMode ? generateSubQueries(claim.text) : [claim.text];
+        const searchResultsNested = await Promise.all(queries.map((q) => searchWeb(q)));
+        const searchResults = searchResultsNested.flat();
+
+        const uniqueUrls = [...new Set(searchResults.map((r) => r.url))]
+          .filter((u) => !!u && u !== '#error')
+          .slice(0, deepMode ? Math.min(8, Math.max(3, breadth * 2)) : breadth);
+
+        const crawlResults = (await Promise.all(uniqueUrls.map((url) => deepCrawl(url, 0)))).flat();
+
+        const summaries = await mapAsync(crawlResults, 3, async (p) => {
+          await new Promise((r) => setTimeout(r, 120));
+          return fastSummarize(p.markdown, claim.text);
+        });
+
+        const richContext = summaries.join('\n\n');
+        fullResearchContext += `\n\n### Claim: ${claim.text}\n${richContext}`;
+
+        const agentResult = await new ResearchAgent(claim, { deepSearch: deepMode, breadth }).run();
+        const { claim: resultClaim } = agentResult;
+        results.push(resultClaim);
+
+        if (resultClaim.evidence) {
+          allSources.push(
+            ...resultClaim.evidence.map((e) => ({
+              url: e.url,
+              title: e.title || e.url,
+              snippet: e.snippet,
+              score: e.confidenceScore,
+            }))
+          );
+          const distilled = await distillEvidenceForClaim(claim.text, resultClaim.evidence || [], richContext);
+          distilledBlocks.push(`## Claim: ${claim.text}\n${distilled}\n`);
+        }
+      } catch (e) {
+        console.error('Agent failed for claim:', claim.id, e);
+        results.push(claim);
+        distilledBlocks.push(`## Claim: ${claim.text}\n- Distillation failed; insufficient evidence gathered.\n`);
+      }
+    }
+
+    const uniqueSources = Array.from(new Map(allSources.map((s) => [s.url, s])).values());
+    const unifiedReport = await generateExecutiveReport(pdrText, distilledBlocks.join('\n\n'), uniqueSources);
+
+    await autoTagJob(jobId, unifiedReport).catch((err) => {
+      console.error('Auto-tagging failed:', err);
+    });
+
+    if (sessionId && userId) {
+      await admin.from('research_contexts').insert({
+        user_id: userId,
+        session_id: sessionId,
+        prompt: pdrText,
+        context: fullResearchContext,
+      });
+
+      await admin
+        .from('research_sessions')
+        .update({ metadata: { claim_count: results.length, status: 'succeeded' } })
+        .eq('id', sessionId);
+    }
+
+    const resultPayload = {
+      claims: results,
+      unifiedReport,
+      sources: uniqueSources,
+      stats: { totalClaims: claims.length, processed: results.length },
+      sessionId,
+    };
+
+    const { error: doneErr } = await admin
+      .from('research_jobs')
+      .update({ status: 'succeeded', result: resultPayload, error: null })
+      .eq('id', jobId);
+
+    if (doneErr) throw doneErr;
+    return { success: true, jobId, result: resultPayload };
+  } catch (err: any) {
+    const message = String(err?.message || err || 'Unknown error');
+    await createAdminSupabase().from('research_jobs').update({ status: 'failed', error: message }).eq('id', jobId);
+    if (sessionId) await createAdminSupabase().from('research_sessions').update({ metadata: { status: 'failed', error: message } }).eq('id', sessionId);
+    return { success: false, jobId, error: message };
+  }
+}
+
+// Called by Worker for Deep Dives
+export async function runDeepDiveAdmin(branchId: string) {
+    const admin = createAdminSupabase();
+    
+    // 1. Fetch Branch Info
+    const { data: branch } = await admin.from('research_branches').select('*').eq('branch_id', branchId).single();
+    if (!branch) return { success: false, error: 'Branch not found' };
+
+    const { seed_text, seed_url, depth, breadth, parent_node_id } = branch;
+
+    // 2. Perform Research (Simplified Logic for Worker)
+    // Note: We duplicate some logic from diveDeeperAction here to ensure independence from Auth
+    const queries = [seed_text];
+    const searchResultsNested = await Promise.all(queries.map((q) => searchWeb(q)));
+    const searchResults = searchResultsNested.flat();
+
+    const urls = [...new Set(searchResults.map((r) => r.url))]
+      .filter((u) => !!u && u !== '#error')
+      .slice(0, Math.min(10, breadth * 2));
+
+    const prioritizedUrls = seed_url ? [seed_url, ...urls.filter((u) => u !== seed_url)] : urls;
+    const crawlResults = (await Promise.all(prioritizedUrls.map((u) => deepCrawl(u, depth)))).flat();
+
+    const summaries = await mapAsync(crawlResults, 3, async (p) => {
+      await new Promise((r) => setTimeout(r, 150));
+      return fastSummarize(p.markdown, seed_text);
+    });
+
+    const branchContext = [
+      `BRANCH_ID: ${branchId}`,
+      `PARENT_NODE: ${parent_node_id}`,
+      `SEED_TEXT: ${seed_text}`,
+      `SUMMARIES:\n${summaries.join('\n\n')}`,
+    ].join('\n\n');
+
+    const branchReport = await writeBetterReport(
+      `Summarize what this deep dive adds beyond the parent node.
+      Return:
+      - 5 key findings
+      - 3 risks/unknowns
+      - 3 recommended next URLs to read`,
+      branchContext
+    );
+
+    // 3. Save Result
+    await admin
+      .from('research_branches')
+      .update({ 
+          report: branchReport,
+          context: branchContext 
+      })
+      .eq('branch_id', branchId);
+
+    return { success: true, branchReport };
 }

@@ -48,6 +48,7 @@ import {
   Bot,
   MessageSquare,
   FileText,
+  Settings, // NEW: Imported Settings icon
 } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
@@ -589,10 +590,22 @@ export default function ClientHome() {
 
         <div className="flex items-center gap-4">
           {user ? (
-            <div className="flex items-center gap-2 text-[10px] font-mono text-gray-400 bg-white/5 px-3 py-1 rounded-full border border-white/10">
-              <User size={10} />
-              <span>{user.email}</span>
-            </div>
+            <>
+              {/* NEW: Settings Link */}
+              <button
+                onClick={() => router.push('/settings')}
+                className="flex items-center gap-2 text-[10px] font-mono text-gray-400 hover:text-white transition-colors"
+                title="Settings & API Keys"
+              >
+                <Settings size={14} />
+                <span className="hidden sm:inline">SETTINGS</span>
+              </button>
+
+              <div className="flex items-center gap-2 text-[10px] font-mono text-gray-400 bg-white/5 px-3 py-1 rounded-full border border-white/10">
+                <User size={10} />
+                <span>{user.email}</span>
+              </div>
+            </>
           ) : (
             <button
               onClick={() => router.push('/login')}

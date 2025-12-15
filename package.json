@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "worker": "tsx src/workers/process-queue.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.86",
@@ -17,6 +18,7 @@
     "ai": "^5.0.113",
     "cheerio": "^1.1.2",
     "dexie": "^4.2.1",
+    "dotenv": "^17.2.3",
     "fast-xml-parser": "^5.3.3",
     "gsap": "^3.13.0",
     "jszip": "^3.10.1",
@@ -48,6 +50,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.0.6",
     "tailwindcss": "^4",
+    "tsx": "^4.21.0",
     "typescript": "^5"
   },
   "volta": {
