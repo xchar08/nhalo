@@ -9,6 +9,7 @@ create extension if not exists "uuid-ossp";
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
 
+
 -- ============================================================================
 -- updated_at helper trigger
 -- ============================================================================
@@ -19,6 +20,7 @@ begin
   return new;
 end;
 $$ language plpgsql;
+
 
 -- ============================================================================
 -- DOCUMENTS
@@ -46,6 +48,7 @@ on public.documents for insert to authenticated
 with check (true);
 
 create index if not exists idx_documents_domain on public.documents(domain);
+
 
 -- ============================================================================
 -- RESEARCH SESSIONS
@@ -83,6 +86,7 @@ using ((select auth.uid()) = user_id);
 
 create index if not exists idx_sessions_user on public.research_sessions(user_id);
 create index if not exists idx_sessions_created_at on public.research_sessions(created_at);
+
 
 -- ============================================================================
 -- RESEARCH CONTEXTS
@@ -123,6 +127,7 @@ drop trigger if exists trg_research_contexts_updated_at on public.research_conte
 create trigger trg_research_contexts_updated_at
 before update on public.research_contexts
 for each row execute function public.set_updated_at();
+
 
 -- ============================================================================
 -- RESEARCH BRANCHES
@@ -177,6 +182,7 @@ create trigger trg_research_branches_updated_at
 before update on public.research_branches
 for each row execute function public.set_updated_at();
 
+
 -- ============================================================================
 -- RESEARCH JOBS
 -- ============================================================================
@@ -221,6 +227,7 @@ create trigger trg_research_jobs_updated_at
 before update on public.research_jobs
 for each row execute function public.set_updated_at();
 
+
 -- ============================================================================
 -- UPDATE EVENTS
 -- ============================================================================
@@ -247,3 +254,73 @@ with check ((select auth.uid()) = user_id);
 
 create index if not exists idx_update_events_user on public.update_events(user_id);
 create index if not exists idx_update_events_created_at on public.update_events(created_at);
+
+-- ============================================================================
+-- ONTOLOGY SYSTEM (Concepts, Entities, Taggings)
+-- ============================================================================
+
+-- A) Concepts (Hierarchical Taxonomy)
+create table if not exists public.concepts (
+  id uuid primary key default uuid_generate_v4(),
+  scheme text not null default 'general',
+  label text not null,
+  description text,
+  parent_id uuid references public.concepts(id),
+  synonyms text[] default '{}',
+  external_id text,
+  created_at timestamptz default now()
+);
+
+-- Constraint to allow unique upsert by label+scheme
+alter table public.concepts drop constraint if exists unique_concept_label_scheme;
+alter table public.concepts add constraint unique_concept_label_scheme unique (label, scheme);
+
+-- B) Entities (Resolved Real-World Objects)
+create table if not exists public.entities (
+  id uuid primary key default uuid_generate_v4(),
+  type text not null,
+  name text not null,
+  aliases text[] default '{}',
+  metadata jsonb default '{}'::jsonb,
+  created_at timestamptz default now()
+);
+
+-- Constraint to allow unique upsert by name+type
+alter table public.entities drop constraint if exists unique_entity_name_type;
+alter table public.entities add constraint unique_entity_name_type unique (name, type);
+
+-- C) Taggings (Polymorphic Link)
+create table if not exists public.taggings (
+  id uuid primary key default uuid_generate_v4(),
+  target_id uuid not null, -- The research_job.id
+  target_type text not null, -- 'job', 'doc', 'session'
+  concept_id uuid references public.concepts(id),
+  entity_id uuid references public.entities(id),
+  confidence float default 1.0,
+  source text default 'manual',
+  evidence jsonb default '{}'::jsonb,
+  created_at timestamptz default now(),
+  constraint tag_target_check check (
+    (concept_id is not null and entity_id is null) or 
+    (concept_id is null and entity_id is not null)
+  )
+);
+
+-- RLS & Policies
+alter table public.concepts enable row level security;
+alter table public.entities enable row level security;
+alter table public.taggings enable row level security;
+
+create policy "Public read concepts" on public.concepts for select using (true);
+create policy "Auth insert concepts" on public.concepts for insert to authenticated with check (true);
+
+create policy "Public read entities" on public.entities for select using (true);
+create policy "Auth insert entities" on public.entities for insert to authenticated with check (true);
+
+create policy "Public read taggings" on public.taggings for select using (true);
+create policy "Auth insert taggings" on public.taggings for insert to authenticated with check (true);
+
+-- Indexes
+create index if not exists idx_concepts_scheme on public.concepts(scheme);
+create index if not exists idx_entities_type on public.entities(type);
+create index if not exists idx_taggings_target on public.taggings(target_id, target_type);

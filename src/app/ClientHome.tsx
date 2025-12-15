@@ -1,11 +1,9 @@
-// ============================================================================
-// FILE: src/app/ClientHome.tsx
-// ============================================================================
 'use client';
 
 import { useState, useMemo, useEffect } from 'react';
 import ForceGraph from '@/components/visualizer/ForceGraph';
-import PdrViewer from '@/components/pdr/PdrViewer';
+// Use named import to match PdrViewer export
+import { PdrViewer } from '@/components/pdr/PdrViewer'; 
 import SmartDigest from '@/components/feed/SmartDigest';
 import StarField from '@/components/visualizer/StarField';
 import GalaxyLogo from '@/components/visualizer/GalaxyLogo';
@@ -197,6 +195,9 @@ export default function ClientHome() {
   const [rawSources, setRawSources] = useState<any[]>([]);
   const [knowledgeFeed, setKnowledgeFeed] = useState<any[]>([]);
 
+  // NEW: State to track current job ID
+  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+
   const [viewTab, setViewTab] = useState<'graph' | 'report' | 'sources'>('graph');
   const [history, setHistory] = useState<ResearchProject[]>([]);
   const [user, setUser] = useState<any>(null);
@@ -363,6 +364,9 @@ export default function ClientHome() {
       setGraphLinks([]);
       setBranchIds([]);
       setSessionId(queued.sessionId ?? null);
+      
+      // NEW: Set current job ID
+      setCurrentJobId(queued.jobId);
 
       // 2) Kick worker immediately (best-effort). Cron is still the fallback.
       try {
@@ -795,7 +799,12 @@ export default function ClientHome() {
                 <span className="text-[10px] font-bold text-gray-400 uppercase">Analysis Stream</span>
               </div>
               <div className="flex-1 overflow-y-auto custom-scrollbar">
-                <PdrViewer claims={claims} onDiveDeeper={openDiveModalFromClaim} />
+                {/* CORRECTED PROP USAGE */}
+                <PdrViewer 
+                  claims={claims} 
+                  onDiveDeeper={openDiveModalFromClaim} 
+                  jobId={currentJobId || undefined} 
+                />
               </div>
             </div>
 

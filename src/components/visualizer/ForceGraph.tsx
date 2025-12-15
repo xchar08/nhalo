@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import { GraphNode, GraphLink } from '@/types/graph';
 
+// Dynamic import for force-graph to avoid SSR issues
 const ForceGraph2D = dynamic(() => import('react-force-graph-2d'), { ssr: false });
 
 interface ForceGraphProps {
@@ -36,11 +37,8 @@ function tooltipHtmlForNode(node: GraphNode) {
     (node.type === 'document' ? 'Source' : 'Node');
 
   const snippet = node.meta?.snippet ? String(node.meta.snippet) : '';
-
-  // Keep tooltip compact; long snippets can be annoying.
   const snip = snippet.length > 240 ? `${snippet.slice(0, 240)}…` : snippet;
 
-  // Only show rich tooltip if we have something useful
   if (!title && !url && !snip) return '';
 
   return `
@@ -74,6 +72,7 @@ function tooltipHtmlForNode(node: GraphNode) {
   `;
 }
 
+// CHANGED BACK TO DEFAULT EXPORT
 export default function ForceGraph({ nodes, links, onNodeSelect }: ForceGraphProps) {
   const [dimensions, setDimensions] = useState({ w: 800, h: 600 });
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -101,7 +100,7 @@ export default function ForceGraph({ nodes, links, onNodeSelect }: ForceGraphPro
 
   const nodeColor = (node: GraphNode) => {
     if (node.type === 'claim') return '#ffffff';
-    if (node.domain === 'research') return '#22d3ee';
+    if (node.domain === 'research') return '#22d3ee'; // cyan
     if (node.domain === 'medical') return '#34d399';
     if (node.domain === 'political') return '#fbbf24';
     if (node.domain === 'branch') return '#a78bfa';
@@ -122,11 +121,8 @@ export default function ForceGraph({ nodes, links, onNodeSelect }: ForceGraphPro
         nodeLabel={(n: any) => tooltipHtmlForNode(n as GraphNode)}
         onNodeClick={(n: any, event: MouseEvent) => {
           const node = n as GraphNode;
-
-          // Click selects only (no auto-open).
           onNodeSelect?.(node);
 
-          // Explicit open action: Shift + click.
           if (event?.shiftKey && node.type === 'document') {
             const url = getNodeUrl(node);
             if (url) window.open(url, '_blank');
@@ -135,13 +131,11 @@ export default function ForceGraph({ nodes, links, onNodeSelect }: ForceGraphPro
         onNodeRightClick={(n: any) => {
           const node = n as GraphNode;
           if (node.type !== 'document') return;
-
           const url = getNodeUrl(node);
           if (url) window.open(url, '_blank');
         }}
         nodeCanvasObject={(n: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
           const node = n as GraphNode & { x: number; y: number };
-
           const label = node.label || '';
           const fontSize = 12 / globalScale;
           const radius = node.type === 'claim' ? 4 : 2 + ((node.confidence || 0.5) * 3);

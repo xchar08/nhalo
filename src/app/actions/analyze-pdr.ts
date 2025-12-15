@@ -11,6 +11,7 @@ import { searchWeb, deepCrawl } from '@/lib/crawlers/free-crawler';
 import { fastSummarize, answerWithContext, writeBetterReport } from '@/lib/ai/fast-summarizer';
 import { getAcademicSeedTargets } from '@/lib/config/academic-seeds';
 import { createClient } from '@/lib/supabase/server';
+import { autoTagJob } from '@/lib/agents/auto-tagger'; // <--- NEW IMPORT
 
 // ---------------------------
 // Helpers
@@ -362,6 +363,14 @@ export async function runResearchJobAdmin(jobId: string) {
 
     const uniqueSources = Array.from(new Map(allSources.map((s) => [s.url, s])).values());
     const unifiedReport = await generateExecutiveReport(pdrText, distilledBlocks.join('\n\n'), uniqueSources);
+
+    // ========================================================================
+    // NEW: Auto-tag the job (Ontology Extraction)
+    // ========================================================================
+    await autoTagJob(jobId, unifiedReport).catch((err) => {
+      console.error('Auto-tagging failed:', err);
+    });
+    // ========================================================================
 
     if (sessionId && userId) {
       await admin.from('research_contexts').insert({

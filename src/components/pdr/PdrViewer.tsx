@@ -1,144 +1,207 @@
-// ============================================================================
-// FILE: src/components/pdr/PdrViewer.tsx
-// ============================================================================
 'use client';
 
-import React, { useState } from 'react';
-import { Claim, EvidenceItem } from '@/types/research';
-import { CheckCircle2, HelpCircle, XCircle, ChevronDown, ChevronUp, FileText } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { ChevronDown, ChevronRight, ExternalLink, Search, Tag } from 'lucide-react';
+import { Claim } from '@/types/research'; // Import the original type
+import { createClient } from '@/lib/supabase/client';
 
-interface PdrViewerProps {
-  claims: Claim[];
-  onDiveDeeper?: (claim: Claim) => void;
+// NEW: Interface for Ontology Tag
+interface OntologyTag {
+  id: string;
+  label: string;
+  type: 'concept' | 'entity';
+  category: string;
+  confidence: number;
 }
 
-const PdrViewer: React.FC<PdrViewerProps> = ({ claims, onDiveDeeper }) => {
-  if (!claims || claims.length === 0) {
-    return <div className="p-4 text-xs text-gray-500 italic text-center">No active analysis stream.</div>;
-  }
-
-  return (
-    <div className="w-full pb-20">
-      {claims.map((claim) => (
-        <ClaimCard key={claim.id} claim={claim} onDiveDeeper={onDiveDeeper} />
-      ))}
-    </div>
-  );
+// FIX: Safely extend Claim type to include 'analysis' without breaking 'verdict'
+type ExtendedClaim = Claim & {
+  analysis?: string;
 };
 
-const ClaimCard = ({ claim, onDiveDeeper }: { claim: Claim; onDiveDeeper?: (claim: Claim) => void }) => {
-  const [expanded, setExpanded] = useState(false);
-  const evidence = claim.evidence || [];
-  const visibleEvidence = evidence.slice(0, 3);
-  const hiddenEvidence = evidence.slice(3);
+interface Props {
+  claims: Claim[];
+  onDiveDeeper?: (claim: Claim) => void;
+  jobId?: string; 
+}
 
-  const statusColor =
-    claim.verdict === 'supported'
-      ? 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10'
-      : claim.verdict === 'refuted'
-        ? 'text-red-400 border-red-500/30 bg-red-500/10'
-        : 'text-amber-400 border-amber-500/30 bg-amber-500/10';
+// FIX: Changed from 'export default function' to 'export function'
+export function PdrViewer({ claims, onDiveDeeper, jobId }: Props) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  
+  // NEW: State for tags
+  const [tags, setTags] = useState<OntologyTag[]>([]);
+  const [loadingTags, setLoadingTags] = useState(false);
+
+  const toggle = (id: string) => {
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  useEffect(() => {
+    if (!jobId) {
+      setTags([]);
+      return;
+    }
+
+    async function fetchTags() {
+      setLoadingTags(true);
+      const supabase = createClient();
+      
+      const { data, error } = await supabase
+        .from('taggings')
+        .select(`confidence, concepts (label, scheme), entities (name, type)`)
+        .eq('target_id', jobId);
+
+      if (error) {
+        console.error('Error fetching tags:', error);
+        setLoadingTags(false);
+        return;
+      }
+
+      const fetchedTags: OntologyTag[] = (data || []).map((row: any, i: number) => {
+        if (row.concepts) {
+          return {
+            id: `concept-${i}`,
+            label: row.concepts.label,
+            type: 'concept',
+            category: row.concepts.scheme,
+            confidence: row.confidence
+          };
+        } else if (row.entities) {
+          return {
+            id: `entity-${i}`,
+            label: row.entities.name,
+            type: 'entity',
+            category: row.entities.type,
+            confidence: row.confidence
+          };
+        }
+        return null;
+      }).filter(Boolean) as OntologyTag[];
+
+      setTags(fetchedTags);
+      setLoadingTags(false);
+    }
+
+    fetchTags();
+  }, [jobId]);
+
+  const getTagColor = (tag: OntologyTag) => {
+    if (tag.type === 'entity') return 'bg-purple-900/40 text-purple-200 border-purple-500/30';
+    if (tag.category === 'health') return 'bg-rose-900/40 text-rose-200 border-rose-500/30';
+    if (tag.category === 'tech') return 'bg-blue-900/40 text-blue-200 border-blue-500/30';
+    if (tag.category === 'politics') return 'bg-orange-900/40 text-orange-200 border-orange-500/30';
+    return 'bg-slate-800 text-slate-300 border-slate-600';
+  };
 
   return (
-    <div className="border-b border-white/10 p-4 hover:bg-white/5 transition-colors group relative overflow-hidden">
-      <div
-        className="absolute top-0 right-0 w-1 h-full transition-all duration-1000"
-        style={{
-          backgroundColor: claim.verdict === 'supported' ? '#34d399' : claim.verdict === 'refuted' ? '#f87171' : '#fbbf24',
-          opacity: (claim.confidence || 0) * 0.8,
-          boxShadow: `0 0 ${(claim.confidence || 0) * 20}px ${
-            claim.verdict === 'supported' ? '#34d399' : claim.verdict === 'refuted' ? '#f87171' : '#fbbf24'
-          }`,
-        }}
-      />
-
-      <div className="flex items-start gap-3 mb-3 relative z-10">
-        <div className="mt-0.5 shrink-0">
-          {claim.verdict === 'supported' && <CheckCircle2 size={16} className="text-emerald-400" />}
-          {claim.verdict === 'refuted' && <XCircle size={16} className="text-red-400" />}
-          {(claim.verdict === 'debated' || claim.verdict === 'unknown') && <HelpCircle size={16} className="text-amber-400" />}
+    <div className="flex flex-col gap-2 p-4 pb-20 text-gray-200">
+      {tags.length > 0 && (
+        <div className="mb-4 flex flex-wrap gap-2 border-b border-white/10 pb-4">
+           {tags.map(tag => (
+             <span key={tag.id} className={`text-[10px] px-2 py-0.5 rounded border ${getTagColor(tag)} uppercase tracking-wider flex items-center gap-1`}>
+               <Tag size={10} className="opacity-50" />
+               {tag.label}
+             </span>
+           ))}
         </div>
+      )}
 
-        <div className="flex-1">
-          <h4 className="text-xs font-medium text-gray-200 leading-relaxed font-mono">{claim.text}</h4>
+      {(claims || []).map((rawClaim, i) => {
+        // Cast to ExtendedClaim to access 'analysis' without error
+        const c = rawClaim as ExtendedClaim;
+        
+        const claimId = c.id || `claim-${i}`;
+        const isExp = expanded[claimId] || false;
+        const confidence = Math.round((c.confidence || 0) * 100);
 
-          <div className="flex items-center gap-3 mt-3">
-            <span className={`text-[9px] px-2 py-0.5 rounded uppercase font-bold tracking-wider border ${statusColor}`}>
-              {claim.verdict}
-            </span>
-
-            <div className="flex items-center gap-2 flex-1 max-w-[120px]" title={`Confidence: ${Math.round((claim.confidence || 0) * 100)}%`}>
-              <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all duration-1000 ${
-                    (claim.confidence || 0) > 0.8
-                      ? 'bg-emerald-400 shadow-[0_0_10px_#34d399]'
-                      : (claim.confidence || 0) > 0.5
-                        ? 'bg-amber-400'
-                        : 'bg-red-500'
-                  }`}
-                  style={{ width: `${Math.round((claim.confidence || 0) * 100)}%` }}
-                />
+        return (
+          <div
+            key={claimId}
+            className="flex flex-col bg-white/5 border border-white/5 rounded hover:border-white/20 transition-all overflow-hidden"
+          >
+            <div
+              className="flex gap-3 p-3 cursor-pointer items-start"
+              onClick={() => toggle(claimId)}
+            >
+              <div className="mt-1 text-gray-500">
+                {isExp ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               </div>
-              <span className="text-[9px] font-mono text-gray-500 w-8 text-right">{Math.round((claim.confidence || 0) * 100)}%</span>
+              
+              <div className="flex-1">
+                <div className="text-xs text-gray-200 leading-snug font-medium">
+                  {c.text}
+                </div>
+                
+                <div className="flex items-center gap-2 mt-2">
+                  <div className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-bold
+                    ${c.verdict === 'supported' ? 'bg-emerald-500/20 text-emerald-400' : 
+                      c.verdict === 'refuted' ? 'bg-red-500/20 text-red-400' : 
+                      'bg-yellow-500/20 text-yellow-400'}`
+                  }>
+                    {c.verdict || 'Unknown'}
+                  </div>
+                  <div className="text-[10px] text-gray-500 font-mono">
+                    CONF: {confidence}%
+                  </div>
+                </div>
+              </div>
             </div>
 
-            {onDiveDeeper && (
-              <button
-                onClick={() => onDiveDeeper(claim)}
-                className="text-[9px] px-2 py-1 rounded border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/10 transition-colors"
-                title="Create a new subgraph from this claim"
-              >
-                Dive deeper
-              </button>
+            {isExp && (
+              <div className="bg-black/20 p-3 border-t border-white/5 animate-in slide-in-from-top-2 duration-150">
+                {c.analysis && (
+                   <div className="prose prose-invert prose-xs max-w-none text-gray-400 mb-3">
+                     <ReactMarkdown>{c.analysis}</ReactMarkdown>
+                   </div>
+                )}
+
+                <div className="space-y-2">
+                   {(c.evidence || []).map((ev: any, j: number) => (
+                     <a 
+                       key={j} 
+                       href={ev.url} 
+                       target="_blank"
+                       rel="noreferrer"
+                       className="block p-2 rounded bg-white/5 hover:bg-white/10 transition-colors group"
+                     >
+                        <div className="text-[10px] text-cyan-400 font-bold truncate group-hover:underline flex items-center gap-1">
+                           {ev.title || 'Source'} <ExternalLink size={8} />
+                        </div>
+                        <div className="text-[9px] text-gray-500 mt-0.5 line-clamp-2">
+                           {ev.snippet}
+                        </div>
+                     </a>
+                   ))}
+                </div>
+
+                {onDiveDeeper && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDiveDeeper(c);
+                    }}
+                    className="mt-3 w-full py-1.5 flex items-center justify-center gap-2 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 text-[10px] rounded border border-cyan-500/20 transition-all"
+                  >
+                    <Search size={10} />
+                    VERIFY DEEPER
+                  </button>
+                )}
+              </div>
             )}
           </div>
-        </div>
-      </div>
+        );
+      })}
 
-      {evidence.length > 0 && (
-        <div className="pl-7 mt-2 border-l border-white/10 ml-2 space-y-2">
-          {visibleEvidence.map((ev, i) => (
-            <EvidenceRow key={i} ev={ev} />
-          ))}
-
-          {hiddenEvidence.length > 0 && expanded && (
-            <div className="space-y-2 animate-in fade-in slide-in-from-top-1">
-              {hiddenEvidence.map((ev, i) => (
-                <EvidenceRow key={i + 3} ev={ev} />
-              ))}
-            </div>
-          )}
-
-          {hiddenEvidence.length > 0 && (
-            <button
-              onClick={() => setExpanded(!expanded)}
-              className="text-[9px] text-gray-500 hover:text-cyan-400 pl-1 pt-1 flex items-center gap-1 transition-colors"
-            >
-              {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-              {expanded ? 'Show Less' : `${hiddenEvidence.length} more sources...`}
-            </button>
-          )}
-        </div>
+      {claims.length === 0 && (
+         <div className="text-center text-xs text-gray-600 py-10 italic">
+           No claims extracted yet...
+         </div>
       )}
     </div>
   );
-};
+}
 
-const EvidenceRow = ({ ev }: { ev: EvidenceItem }) => (
-  <div className="bg-black/20 p-2 rounded border border-white/5 text-[10px] hover:bg-black/40 transition-colors group/ev">
-    <div className="flex justify-between items-start mb-1">
-      <a href={ev.url} target="_blank" rel="noopener noreferrer" className="text-cyan-500 hover:underline flex items-center gap-1 truncate max-w-[80%]">
-        <FileText size={8} />
-        {ev.title || ev.url}
-      </a>
-      <div className="flex items-center gap-1" title="Source Relevancy">
-        <div className={`w-1.5 h-1.5 rounded-full ${ev.confidenceScore > 0.7 ? 'bg-emerald-500' : 'bg-gray-600'}`} />
-        <span className="text-gray-600">{Math.round(ev.confidenceScore * 100)}%</span>
-      </div>
-    </div>
-    <p className="text-gray-400 leading-snug line-clamp-2 group-hover/ev:text-gray-300 transition-colors">{ev.snippet}</p>
-  </div>
-);
-
+// Also keep default export just in case other files use it
 export default PdrViewer;
