@@ -1,9 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Link from 'next/link'; // <--- NEW IMPORT
 import { createApiKeyAction, renameApiKeyAction } from '@/app/actions/api-keys';
 import { createClient } from '@/lib/supabase/client';
-import { Trash2, Copy, Plus, Key, AlertTriangle, Check, Loader2, Edit2, X, Save } from 'lucide-react';
+import { Trash2, Copy, Plus, Key, AlertTriangle, Check, Loader2, Edit2, X, Save, ArrowLeft } from 'lucide-react'; // <--- ADDED ArrowLeft
 
 interface ApiKey {
   id: string;
@@ -98,9 +99,20 @@ export default function ApiKeyManager() {
 
   return (
     <div className="max-w-2xl w-full bg-[#050505] border border-white/10 rounded-xl p-6 text-gray-200 shadow-2xl">
-      <h2 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
-        <Key className="text-cyan-400" size={20} /> API Keys
-      </h2>
+      {/* HEADER ROW */}
+      <div className="flex items-center justify-between mb-2">
+        <h2 className="text-xl font-bold text-white flex items-center gap-2">
+          <Key className="text-cyan-400" size={20} /> API Keys
+        </h2>
+        {/* BACK BUTTON */}
+        <Link 
+          href="/" 
+          className="text-xs font-medium text-gray-500 hover:text-white flex items-center gap-1 transition-colors px-3 py-1.5 rounded hover:bg-white/5"
+        >
+          <ArrowLeft size={14} /> Back to Home
+        </Link>
+      </div>
+
       <p className="text-sm text-gray-500 mb-6 border-b border-white/5 pb-4">
         Generate keys to access the Halo Research API.
       </p>
