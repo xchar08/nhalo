@@ -2,7 +2,6 @@
 // FILE: src/lib/crawlers/free-crawler.ts
 // ============================================================================
 import * as cheerio from 'cheerio';
-
 import pdfParse from '@cedrugs/pdf-parse';
 import mammoth from 'mammoth';
 import JSZip from 'jszip';
@@ -268,7 +267,12 @@ async function searchSerper(query: string): Promise<SearchResult[]> {
         snippet: String(item.snippet || ''),
       }))
       .filter((r: SearchResult) => !isBadUrl(r.url) && !isTrapUrl(r.url));
-  } catch (e) {
+  } catch (e: any) {
+    // Graceful handling for Network/DNS errors
+    if (e.cause?.code === 'ENOTFOUND') {
+      console.warn(`[Crawler] Network error: Cannot reach Google Serper. Check internet connection.`);
+      return [];
+    }
     console.error('[Crawler] Serper failed:', e);
     return [];
   }
@@ -307,7 +311,12 @@ async function searchDuckDuckGoLite(query: string): Promise<SearchResult[]> {
     });
 
     return results.slice(0, 6);
-  } catch (e) {
+  } catch (e: any) {
+    // Graceful handling for Network/DNS errors
+    if (e.cause?.code === 'ENOTFOUND') {
+      console.warn(`[Crawler] Network error: Cannot reach DuckDuckGo. Check internet connection.`);
+      return [];
+    }
     console.error('[Crawler] DDG Lite failed:', e);
     return [];
   }
@@ -325,43 +334,58 @@ export async function searchWeb(query: string): Promise<SearchResult[]> {
 // Fetch helpers
 // ---------------------------
 async function fetchArrayBuffer(url: string): Promise<{ buffer: Buffer; contentType: string }> {
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-      Accept: '*/*',
-      'Accept-Language': 'en-US,en;q=0.5',
-    },
-    signal: AbortSignal.timeout(15000),
-    cache: 'no-store',
-  });
+  try {
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        Accept: '*/*',
+        'Accept-Language': 'en-US,en;q=0.5',
+      },
+      signal: AbortSignal.timeout(15000),
+      cache: 'no-store',
+    });
 
-  if (!res.ok) throw new Error(`Fetch failed ${res.status}`);
+    if (!res.ok) throw new Error(`Fetch failed ${res.status}`);
 
-  const contentType = res.headers.get('content-type') || '';
-  const ab = await res.arrayBuffer();
-  return { buffer: Buffer.from(ab), contentType };
+    const contentType = res.headers.get('content-type') || '';
+    const ab = await res.arrayBuffer();
+    return { buffer: Buffer.from(ab), contentType };
+  } catch (e: any) {
+    if (e.cause?.code === 'ENOTFOUND') {
+        // Silent fail for deep crawl items is usually better than spamming logs
+        // console.warn(`[Crawler] Failed to reach ${url} (DNS/Network)`);
+    }
+    throw e;
+  }
 }
 
 async function fetchHtml(url: string): Promise<{ html: string; title: string; contentType: string }> {
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.5',
-    },
-    signal: AbortSignal.timeout(10000),
-    cache: 'no-store',
-  });
+  try {
+    const res = await fetch(url, {
+        headers: {
+        'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        },
+        signal: AbortSignal.timeout(10000),
+        cache: 'no-store',
+    });
 
-  if (!res.ok) throw new Error(`HTML fetch failed ${res.status}`);
+    if (!res.ok) throw new Error(`HTML fetch failed ${res.status}`);
 
-  const contentType = res.headers.get('content-type') || '';
-  const html = await res.text();
-  const $ = cheerio.load(html);
-  const title = $('title').text() || url;
-  return { html, title, contentType };
+    const contentType = res.headers.get('content-type') || '';
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    const title = $('title').text() || url;
+    return { html, title, contentType };
+  } catch (e: any) {
+    if (e.cause?.code === 'ENOTFOUND') {
+        // console.warn(`[Crawler] Failed to reach ${url} (DNS/Network)`);
+    }
+    throw e;
+  }
 }
 
 // ---------------------------
