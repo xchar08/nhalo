@@ -48,7 +48,7 @@ import {
   Bot,
   MessageSquare,
   FileText,
-  Settings, // NEW: Imported Settings icon
+  Settings, // Kept your Settings icon
 } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
@@ -60,6 +60,8 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import 'katex/dist/katex.min.css';
 
+// --- Types ---
+
 type DiveModalState =
   | { open: false }
   | {
@@ -70,8 +72,39 @@ type DiveModalState =
       parentNodeId: string;
     };
 
+// NEW: Notification Types
+type JobNoticeKind = 'success' | 'error';
+type JobNotice = { kind: JobNoticeKind; title: string; message: string; jobId?: string };
+
 function makeBranchId() {
   return `b_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+// --- NEW: Notification Helpers ---
+
+async function ensureBrowserNotifyPermission() {
+  if (typeof window === 'undefined') return;
+  if (!('Notification' in window)) return;
+
+  if (Notification.permission === 'default') {
+    try {
+      await Notification.requestPermission();
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function browserNotify(title: string, body: string) {
+  if (typeof window === 'undefined') return;
+  if (!('Notification' in window)) return;
+  if (Notification.permission !== 'granted') return;
+
+  try {
+    new Notification(title, { body });
+  } catch {
+    // ignore
+  }
 }
 
 // --- CHAT COMPONENT ---
@@ -196,7 +229,7 @@ export default function ClientHome() {
   const [rawSources, setRawSources] = useState<any[]>([]);
   const [knowledgeFeed, setKnowledgeFeed] = useState<any[]>([]);
 
-  // NEW: State to track current job ID
+  // State to track current job ID
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
 
   const [viewTab, setViewTab] = useState<'graph' | 'report' | 'sources'>('graph');
@@ -220,6 +253,9 @@ export default function ClientHome() {
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphLinks, setGraphLinks] = useState<GraphLink[]>([]);
 
+  // NEW: Notification state
+  const [jobNotice, setJobNotice] = useState<JobNotice | null>(null);
+
   const router = useRouter();
   const supabase = createClient();
 
@@ -236,6 +272,12 @@ export default function ClientHome() {
 
     init();
   }, [supabase]);
+
+  // NEW: Helper to show notification
+  function showJobNotice(kind: JobNoticeKind, title: string, message: string, jobId?: string) {
+    setJobNotice({ kind, title, message, jobId });
+    setTimeout(() => setJobNotice(null), 6000);
+  }
 
   function buildGraphFromClaims(claimsInput: Claim[]) {
     const rootBranch = 'root';
@@ -324,10 +366,17 @@ export default function ClientHome() {
 
           setMode('analysis');
           setViewTab('graph');
+
+          // NEW: Notify Success
+          showJobNotice('success', 'Research job finished', 'Report generated and loaded.', jobId);
+          browserNotify('Research job finished', 'Report generated and loaded.');
           return;
         }
 
         if (job.status === 'failed') {
+          // NEW: Notify Failure
+          showJobNotice('error', 'Research job failed', job.error || 'Job failed.', jobId);
+          browserNotify('Research job failed', job.error || 'Job failed.');
           throw new Error(job.error || 'Job failed');
         }
       }
@@ -340,6 +389,9 @@ export default function ClientHome() {
 
   const handleAnalyze = async () => {
     if (!inputText.trim()) return;
+
+    // NEW: Request permission on user click
+    await ensureBrowserNotifyPermission();
 
     setIsAnalyzing(true);
 
@@ -366,7 +418,7 @@ export default function ClientHome() {
       setBranchIds([]);
       setSessionId(queued.sessionId ?? null);
       
-      // NEW: Set current job ID
+      // Set current job ID
       setCurrentJobId(queued.jobId);
 
       // 2) Kick worker immediately (best-effort). Cron is still the fallback.
@@ -591,7 +643,7 @@ export default function ClientHome() {
         <div className="flex items-center gap-4">
           {user ? (
             <>
-              {/* NEW: Settings Link */}
+              {/* Settings Link (Kept from your snippet) */}
               <button
                 onClick={() => router.push('/settings')}
                 className="flex items-center gap-2 text-[10px] font-mono text-gray-400 hover:text-white transition-colors"
@@ -1004,6 +1056,32 @@ export default function ClientHome() {
                 {busy ? 'Working…' : 'Run dive'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* NEW: TOAST NOTIFICATION */}
+      {jobNotice && (
+        <div className="fixed top-4 right-4 z-[9999] w-[360px] rounded-lg border border-white/10 bg-black/80 backdrop-blur p-3 shadow-2xl animate-in slide-in-from-top-5 fade-in duration-300">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div
+                className={`text-sm font-semibold ${
+                  jobNotice.kind === 'success' ? 'text-cyan-300' : 'text-red-300'
+                }`}
+              >
+                {jobNotice.title}
+              </div>
+              <div className="mt-1 text-xs text-gray-300">{jobNotice.message}</div>
+              {jobNotice.jobId && <div className="mt-1 text-[10px] font-mono text-gray-500">Job: {jobNotice.jobId}</div>}
+            </div>
+            <button
+              onClick={() => setJobNotice(null)}
+              className="text-xs text-gray-400 hover:text-white"
+              aria-label="Dismiss notification"
+            >
+              ✕
+            </button>
           </div>
         </div>
       )}
