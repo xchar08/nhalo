@@ -335,7 +335,7 @@ export default function ClientHome() {
 
   async function pollJobUntilDone(jobId: string) {
     const start = Date.now();
-    const timeoutMs = 90_000;
+    const timeoutMs = 300_000; 
 
     while (Date.now() - start < timeoutMs) {
       const res: any = await getResearchJobAction(jobId);
@@ -377,10 +377,11 @@ export default function ClientHome() {
   const handleAnalyze = async () => {
     if (!inputText.trim()) return;
 
-    // Request permissions on user click
-    await ensureBrowserNotifyPermission();
-
+    // UPDATE: Start loading immediately, don't wait for permission
     setIsAnalyzing(true);
+    
+    // Fire-and-forget permission check so it doesn't block execution
+    ensureBrowserNotifyPermission().catch(() => {});
 
     try {
       if (user) {
@@ -771,7 +772,7 @@ export default function ClientHome() {
                     </div>
                   </div>
 
-                  {/* FIXED BUTTON: Removed 'disabled' so it's always clickable unless input is empty */}
+                  {/* UPDATED: Never disabled by 'isAnalyzing' so you can always retry */}
                   <button
                     onClick={handleAnalyze}
                     disabled={!inputText.trim()}
