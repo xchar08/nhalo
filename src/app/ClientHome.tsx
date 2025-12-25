@@ -253,9 +253,6 @@ export default function ClientHome() {
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphLinks, setGraphLinks] = useState<GraphLink[]>([]);
 
-  // NEW: Notification state
-  const [jobNotice, setJobNotice] = useState<JobNotice | null>(null);
-
   const router = useRouter();
   const supabase = createClient();
 
@@ -272,12 +269,6 @@ export default function ClientHome() {
 
     init();
   }, [supabase]);
-
-  // NEW: Helper to show notification
-  function showJobNotice(kind: JobNoticeKind, title: string, message: string, jobId?: string) {
-    setJobNotice({ kind, title, message, jobId });
-    setTimeout(() => setJobNotice(null), 6000);
-  }
 
   function buildGraphFromClaims(claimsInput: Claim[]) {
     const rootBranch = 'root';
@@ -364,19 +355,15 @@ export default function ClientHome() {
 
           buildGraphFromClaims(nextClaims);
 
+          // Notify success
+          browserNotify('Research Complete', 'Your comprehensive report is ready.');
+
           setMode('analysis');
           setViewTab('graph');
-
-          // NEW: Notify Success
-          showJobNotice('success', 'Research job finished', 'Report generated and loaded.', jobId);
-          browserNotify('Research job finished', 'Report generated and loaded.');
           return;
         }
 
         if (job.status === 'failed') {
-          // NEW: Notify Failure
-          showJobNotice('error', 'Research job failed', job.error || 'Job failed.', jobId);
-          browserNotify('Research job failed', job.error || 'Job failed.');
           throw new Error(job.error || 'Job failed');
         }
       }
@@ -390,7 +377,7 @@ export default function ClientHome() {
   const handleAnalyze = async () => {
     if (!inputText.trim()) return;
 
-    // NEW: Request permission on user click
+    // Request permissions on user click
     await ensureBrowserNotifyPermission();
 
     setIsAnalyzing(true);
@@ -432,6 +419,8 @@ export default function ClientHome() {
       await pollJobUntilDone(String(queued.jobId));
     } catch (e: any) {
       console.error(e);
+      browserNotify('Research Failed', String(e?.message || 'Unknown error'));
+
       setMode('analysis');
       setViewTab('report');
       setUnifiedReport(`Job failed: ${String(e?.message || e)}`);
@@ -561,7 +550,11 @@ export default function ClientHome() {
       setBranchIds((prev) => (prev.includes(branchId) ? prev : [branchId, ...prev]));
 
       setUnifiedReport((prev) => `${prev}\n\n---\n\n## Dive Deeper Branch ${branchId}\n\n${res.branchReport}`);
+      browserNotify('Deep Dive Complete', 'New insights have been added to your graph.');
       setDiveModal({ open: false });
+    } catch (e) {
+      console.error(e);
+      browserNotify('Dive Failed', 'Could not complete the deep dive.');
     } finally {
       setBusy(false);
     }
@@ -643,7 +636,7 @@ export default function ClientHome() {
         <div className="flex items-center gap-4">
           {user ? (
             <>
-              {/* Settings Link (Kept from your snippet) */}
+              {/* NEW: Settings Link */}
               <button
                 onClick={() => router.push('/settings')}
                 className="flex items-center gap-2 text-[10px] font-mono text-gray-400 hover:text-white transition-colors"
@@ -778,13 +771,27 @@ export default function ClientHome() {
                     </div>
                   </div>
 
+                  {/* FIXED BUTTON: Removed 'disabled' so it's always clickable unless input is empty */}
                   <button
                     onClick={handleAnalyze}
-                    disabled={isAnalyzing || !inputText}
-                    className="flex items-center gap-2 px-5 py-2 bg-white hover:bg-gray-200 text-black text-xs font-bold font-mono rounded disabled:opacity-50"
+                    disabled={!inputText.trim()}
+                    className={`flex items-center gap-2 px-5 py-2 rounded text-xs font-bold font-mono transition-all disabled:opacity-50 ${
+                      !inputText.trim()
+                        ? 'bg-white/10 text-gray-500 cursor-not-allowed'
+                        : 'bg-white hover:bg-gray-200 text-black shadow-[0_0_15px_rgba(255,255,255,0.3)]'
+                    }`}
                   >
-                    {isAnalyzing ? <Sparkles size={12} className="animate-spin" /> : 'EXECUTE'}
-                    <ArrowRight size={12} />
+                    {isAnalyzing ? (
+                      <>
+                        <Sparkles size={12} className="animate-spin" />
+                        <span>PROCESSING...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>EXECUTE</span>
+                        <ArrowRight size={12} />
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
@@ -1056,32 +1063,6 @@ export default function ClientHome() {
                 {busy ? 'Working…' : 'Run dive'}
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* NEW: TOAST NOTIFICATION */}
-      {jobNotice && (
-        <div className="fixed top-4 right-4 z-[9999] w-[360px] rounded-lg border border-white/10 bg-black/80 backdrop-blur p-3 shadow-2xl animate-in slide-in-from-top-5 fade-in duration-300">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div
-                className={`text-sm font-semibold ${
-                  jobNotice.kind === 'success' ? 'text-cyan-300' : 'text-red-300'
-                }`}
-              >
-                {jobNotice.title}
-              </div>
-              <div className="mt-1 text-xs text-gray-300">{jobNotice.message}</div>
-              {jobNotice.jobId && <div className="mt-1 text-[10px] font-mono text-gray-500">Job: {jobNotice.jobId}</div>}
-            </div>
-            <button
-              onClick={() => setJobNotice(null)}
-              className="text-xs text-gray-400 hover:text-white"
-              aria-label="Dismiss notification"
-            >
-              ✕
-            </button>
           </div>
         </div>
       )}
