@@ -335,7 +335,7 @@ export default function ClientHome() {
 
   async function pollJobUntilDone(jobId: string) {
     const start = Date.now();
-    const timeoutMs = 1_200_000; 
+    const timeoutMs = 2_400_000; 
 
     while (Date.now() - start < timeoutMs) {
       const res: any = await getResearchJobAction(jobId);
