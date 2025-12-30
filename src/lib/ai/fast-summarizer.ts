@@ -34,10 +34,10 @@ async function callWithRetry<T>(fn: () => Promise<T>, opts?: { retries?: number 
       const status = e?.status ?? e?.response?.status;
       // 429 = Too Many Requests. If it's not 429, we might not want to retry immediately unless it's a network blip.
       // But for robustness, let's retry on most errors except 400s (Bad Request).
-      if (status && status >= 400 && status < 429) break; 
-      
+      if (status && status >= 400 && status < 429) break;
+
       if (attempt === retries) break;
-      
+
       // exponential backoff: 1s, 2s, 4s
       await sleep(1000 * Math.pow(2, attempt));
     }
@@ -55,7 +55,7 @@ export async function fastSummarize(text: string, query: string): Promise<string
         client.chat.completions.create({
           model: 'llama3.1-8b',
           temperature: 0.15,
-          max_tokens: 520,
+          max_tokens: 800, // Increased slightly for better summaries
           messages: [
             {
               role: 'system',
@@ -83,14 +83,17 @@ export async function writeBetterReport(instruction: string, context: string): P
         client.chat.completions.create({
           model: 'llama3.1-8b',
           temperature: 0.25,
-          max_tokens: 1500,
+          max_tokens: 4000, // <--- INCREASED from 1500 to 4000 to prevent cutoff
           messages: [
             {
               role: 'system',
               content:
                 'You are an expert technical research writer. Write concise, comprehensive, defensive reports. Separate evidence from assumptions. Use Markdown tables where useful.',
             },
-            { role: 'user', content: `Instruction:\n${instruction}\n\nContext:\n${safeSlice(context, 22000)}` },
+            {
+              role: 'user',
+              content: `Instruction:\n${instruction}\n\nContext:\n${safeSlice(context, 50000)}`, // <--- INCREASED Context to 50k chars
+            },
           ],
         }),
       { retries: 2 }
@@ -111,7 +114,7 @@ export async function answerWithContext(question: string, context: string): Prom
         client.chat.completions.create({
           model: 'llama3.1-8b',
           temperature: 0.2,
-          max_tokens: 900,
+          max_tokens: 2000, // Increased for longer answers
           messages: [
             {
               role: 'system',
@@ -134,7 +137,7 @@ export async function answerWithContext(question: string, context: string): Prom
 export async function generateResearchPlan(userPrompt: string): Promise<string[]> {
   if (!process.env.CEREBRAS_API_KEY) {
     // Fallback if no key: just return lines but filtered aggressively
-    return userPrompt.split('\n').map(s => s.trim()).filter(s => s.length > 20).slice(0, 5);
+    return userPrompt.split('\n').map((s) => s.trim()).filter((s) => s.length > 20).slice(0, 5);
   }
 
   try {
@@ -147,12 +150,12 @@ export async function generateResearchPlan(userPrompt: string): Promise<string[]
           messages: [
             {
               role: 'system',
-              content: `You are a Research Planner. Analyze the user's project request. 
+              content: `You are a Research Planner. Analyze the user's project request.
 Identify the core factual claims, entities, and technical requirements that need verification.
 Consolidate similar points.
-Return a list of 5-15 DISTINCT, SELF-CONTAINED search queries. 
-Do not answer them. 
-Format: One query per line, starting with "- ".`
+Return a list of 5-15 DISTINCT, SELF-CONTAINED search queries.
+Do not answer them.
+Format: One query per line, starting with "- ".`,
             },
             { role: 'user', content: `Project Request:\n${safeSlice(userPrompt, 5000)}` },
           ],
@@ -161,19 +164,19 @@ Format: One query per line, starting with "- ".`
     );
 
     const text = completion.choices[0]?.message?.content || '';
-    
+
     // Parse the output (lines starting with - )
     const queries = text
       .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.startsWith('-'))
-      .map(line => line.replace(/^-\s*/, '').trim())
-      .filter(q => q.length > 5);
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('-'))
+      .map((line) => line.replace(/^-\s*/, '').trim())
+      .filter((q) => q.length > 5);
 
     return queries.length > 0 ? queries : [userPrompt]; // Fallback to raw text if parsing fails
   } catch (e) {
     console.error('Research Plan Gen Failed:', e);
     // Fallback logic on error
-    return userPrompt.split('\n').map(s => s.trim()).filter(s => s.length > 20);
+    return userPrompt.split('\n').map((s) => s.trim()).filter((s) => s.length > 20);
   }
 }
