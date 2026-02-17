@@ -83,7 +83,7 @@ export async function writeBetterReport(instruction: string, context: string): P
         client.chat.completions.create({
           model: 'llama3.1-8b',
           temperature: 0.25,
-          max_tokens: 4000, // <--- INCREASED from 1500 to 4000 to prevent cutoff
+          max_tokens: 8000, // <--- INCREASED from 4000 to 8000 to prevent cutoff
           messages: [
             {
               role: 'system',

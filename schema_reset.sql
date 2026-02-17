@@ -1,6 +1,26 @@
 -- ============================================================================
--- schema.sql (COMPLETE & UPDATED)
--- Extensions + tables + RLS/policies + triggers + indexes
+-- DANGEROUS: RUNNING THIS WILL WIPE ALL DATA
+-- ============================================================================
+
+-- Drop Tables (Order matters due to foreign keys, using CASCADE simplifies this)
+drop table if exists public.report_shares cascade;
+drop table if exists public.reports cascade;
+drop table if exists public.taggings cascade;
+drop table if exists public.entities cascade;
+drop table if exists public.concepts cascade;
+drop table if exists public.update_events cascade;
+drop table if exists public.research_jobs cascade;
+drop table if exists public.research_branches cascade;
+drop table if exists public.research_contexts cascade;
+drop table if exists public.research_sessions cascade;
+drop table if exists public.documents cascade;
+drop table if exists public.api_keys cascade;
+
+-- Clean up types/functions if needed (optional)
+-- drop type if exists ...;
+
+-- ============================================================================
+-- RE-STRAP SCHEMA
 -- ============================================================================
 
 -- Extensions
@@ -361,6 +381,7 @@ create policy "Auth insert taggings" on public.taggings for insert to authentica
 -- Indexes
 create index if not exists idx_concepts_scheme on public.concepts(scheme);
 create index if not exists idx_entities_type on public.entities(type);
+create index if not exists idx_taggings_target on public.taggings(target_id, target_type);
 
 -- ============================================================================
 -- REPORTS (Collaborative Docs)
@@ -473,4 +494,3 @@ drop trigger if exists trg_reports_updated_at on public.reports;
 create trigger trg_reports_updated_at
 before update on public.reports
 for each row execute function public.set_updated_at();
-

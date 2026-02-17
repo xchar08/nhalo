@@ -540,18 +540,26 @@ function extractLinks($: cheerio.CheerioAPI, baseUrl: string): string[] {
 // ---------------------------
 // Public crawl API
 // ---------------------------
-export async function deepCrawl(url: string, currentDepth: number = 0, visited: Set<string> = new Set()): Promise<CrawlResult[]> {
+export async function deepCrawl(
+  url: string,
+  currentDepth: number = 0,
+  maxDepth: number = MAX_DEPTH,
+  maxPages: number = MAX_PAGES_PER_QUERY,
+  visited: Set<string> = new Set()
+): Promise<CrawlResult[]> {
   url = stripTrackingParams(normalizeUrl(url));
 
-  if (currentDepth > MAX_DEPTH) return [];
+  if (currentDepth > maxDepth) return [];
+  // Use a shared visited set to track global limit across recursion?
+  // Actually, 'visited' is passed by reference, so checking size works for global limit if we share the set.
   if (visited.has(url)) return [];
-  if (visited.size > MAX_PAGES_PER_QUERY) return [];
+  if (visited.size >= maxPages) return [];
 
   if (isBadUrl(url) || isTrapUrl(url)) return [];
   if (url.includes('sitemap') || url.endsWith('.xml')) return [];
 
   visited.add(url);
-  console.log(`[DeepCrawl] Depth ${currentDepth}: ${url}`);
+  console.log(`[DeepCrawl] Depth ${currentDepth}/${maxDepth} (Limit ${maxPages}): ${url}`);
 
   // Binary first
   if (isLikelyBinary(url)) {
@@ -587,6 +595,7 @@ export async function deepCrawl(url: string, currentDepth: number = 0, visited: 
   try {
     const { html, title, contentType } = await fetchHtml(url);
 
+    // Some endpoints say HTML but deliver PDF bytes
     if (contentType.includes('application/pdf')) {
       try {
         const { buffer } = await fetchArrayBuffer(url);
@@ -604,10 +613,13 @@ export async function deepCrawl(url: string, currentDepth: number = 0, visited: 
     const result: CrawlResult = { url, title, markdown: text, depth: currentDepth, contentType };
     const results: CrawlResult[] = [result];
 
-    if (currentDepth < MAX_DEPTH) {
+    if (currentDepth < maxDepth) {
       const $ = cheerio.load(html);
       const links = extractLinks($, url);
-      const childResults = await Promise.all(links.map((link) => deepCrawl(link, currentDepth + 1, visited)));
+      // We pass the SAME visited set to enforce global page limit
+      const childResults = await Promise.all(
+        links.map((link) => deepCrawl(link, currentDepth + 1, maxDepth, maxPages, visited))
+      );
       childResults.forEach((arr) => results.push(...arr));
     }
 
@@ -618,10 +630,13 @@ export async function deepCrawl(url: string, currentDepth: number = 0, visited: 
 }
 
 export async function crawlUrl(url: string) {
-  const res = await deepCrawl(url, MAX_DEPTH);
+  const res = await deepCrawl(url, 0, MAX_DEPTH, MAX_PAGES_PER_QUERY);
   return { markdown: res[0]?.markdown || '' };
 }
 
-export async function recursiveBranchCrawl(url: string, _query: string, _depth: number, _limit: number) {
-  return deepCrawl(url, 0);
+export async function recursiveBranchCrawl(url: string, _query: string, depth: number, limit: number) {
+  // Respect the depth and limit parameters
+  const effectiveDepth = depth > 0 ? depth : 1;
+  const effectiveLimit = limit > 0 ? limit : 5;
+  return deepCrawl(url, 0, effectiveDepth, effectiveLimit);
 }

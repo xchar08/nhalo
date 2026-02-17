@@ -22,13 +22,25 @@ const TRUSTED_OVERRIDES: Array<{
   institution?: string;
 }> = [
   { id: 'nature', name: 'Nature Research', url: 'http://feeds.nature.com/nature/rss/current' },
+  { id: 'science', name: 'Science Magazine', url: 'https://www.science.org/rss/news_current.xml' },
   { id: 'arxivai', name: 'arXiv AI', url: 'http://export.arxiv.org/rss/cs.AI' },
   { id: 'arxivcl', name: 'arXiv Computation', url: 'http://export.arxiv.org/rss/cs.CL' },
+  { id: 'arxivlg', name: 'arXiv ML', url: 'http://export.arxiv.org/rss/cs.LG' },
   { id: 'techcrunch', name: 'TechCrunch AI', url: 'https://techcrunch.com/category/artificial-intelligence/feed/' },
   { id: 'mit', name: 'MIT Tech Review', url: 'https://www.technologyreview.com/feed/' },
   { id: 'yc', name: 'Hacker News', url: 'https://hnrss.org/newest?points=100' },
   { id: 'wired', name: 'Wired AI', url: 'https://www.wired.com/feed/category/ai/latest/rss' },
   { id: 'venturebeat', name: 'VentureBeat', url: 'https://venturebeat.com/category/ai/feed/' },
+  { id: 'googleresearch', name: 'Google Research', url: 'http://feeds.feedburner.com/blogspot/gjzCe' },
+  { id: 'openai', name: 'OpenAI Blog', url: 'https://openai.com/blog/rss.xml' },
+  { id: 'microsoft', name: 'Microsoft Research', url: 'https://www.microsoft.com/en-us/research/feed/' },
+  { id: 'nvidia', name: 'NVIDIA Blog', url: 'https://blogs.nvidia.com/feed/' },
+  { id: 'aws', name: 'AWS ML Blog', url: 'https://aws.amazon.com/blogs/machine-learning/feed/' },
+  { id: 'huggingface', name: 'Hugging Face', url: 'https://huggingface.co/blog/feed.xml' },
+  { id: 'distill', name: 'Distill', url: 'https://distill.pub/rss.xml' },
+  { id: 'bair', name: 'Berkeley AI Research', url: 'https://bair.berkeley.edu/blog/feed.xml' },
+  { id: 'stanfordhai', name: 'Stanford HAI', url: 'https://hai.stanford.edu/news/rss' },
+  { id: 'deepmind', name: 'Google DeepMind', url: 'https://deepmind.google/discover/blog/rss.xml' },
 ];
 
 export interface FeedItem {

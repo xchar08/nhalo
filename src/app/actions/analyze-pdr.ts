@@ -39,12 +39,16 @@ async function mapAsync<T, R>(array: T[], limit: number, fn: (item: T) => Promis
   return Promise.all(results);
 }
 
+
+
 function generateSubQueries(originalQuery: string): string[] {
   return [
     originalQuery,
     `${originalQuery} technical details`,
     `${originalQuery} documentation OR benchmarks`,
     `${originalQuery} limitations`,
+    `${originalQuery} site:.edu OR site:arxiv.org`,
+    `${originalQuery} "research paper" OR "study" FILETYPE:pdf`,
   ];
 }
 
@@ -54,14 +58,14 @@ async function distillEvidenceForClaim(claimText: string, evidence: EvidenceItem
     `EVIDENCE_COUNT: ${evidence?.length ?? 0}`,
     `EVIDENCE (titles+urls+snippets):\n${
       (evidence || [])
-        .slice(0, 8)
+        .slice(0, 12)
         .map(
           (e, i) =>
-            `(${i + 1}) ${e.title || 'Untitled'} | ${e.url}\n${String(e.snippet || '').slice(0, 300)}`
+            `(${i + 1}) ${e.title || 'Untitled'} | ${e.url}\n${String(e.snippet || '').slice(0, 400)}`
         )
         .join('\n\n')
     }`,
-    `SUMMARIES:\n${summaries.slice(0, 12000)}`,
+    `SUMMARIES:\n${summaries.slice(0, 18000)}`,
   ].join('\n\n');
 
   return writeBetterReport(
@@ -87,22 +91,46 @@ async function generateExecutiveReport(projectText: string, perClaimDistilled: s
       .join('\n')}`,
   ].join('\n\n');
 
-  return writeBetterReport(
-    `Write a research report that is concise yet comprehensive and defensive.
+  // Chunk 1: Executive Summary & Key Decisions
+  const part1 = await writeBetterReport(
+    `Write PART 1 of a research report.
 Required sections (in this order):
 1) Executive Summary (7-10 bullets, each bullet has "Because:" justification)
 2) Key Decisions (Markdown table: Decision | Recommendation | Confidence | Rationale | Risks)
+
+Constraints:
+- Do not invent sources.
+- Keep language professional and specific.`,
+    context
+  );
+
+  // Chunk 2: Claim Register & Risk Register
+  const part2 = await writeBetterReport(
+    `Write PART 2 of a research report.
+Required sections (in this order):
 3) Claim Register (Markdown table: Claim | Verdict | Confidence | Strongest Evidence | Open Questions)
 4) Risk Register (bullets grouped: Technical / Deployment / Legal-Ethical / Cost)
+
+Constraints:
+- Do not add Executive Summary or Key Decisions again.
+- Continue from where Part 1 left off.`,
+    context
+  );
+
+  // Chunk 3: Next Actions & Appendix
+  const part3 = await writeBetterReport(
+    `Write PART 3 of a research report.
+Required sections (in this order):
 5) Next Actions (checklist, prioritized)
 6) Appendix: Sources (bulleted list with short labels, no long quotes)
 
 Constraints:
-- Do not invent sources.
-- If evidence is weak, say so clearly.
-- Keep language professional and specific.`,
+- Do not add previous sections again.
+- Ensure the Sources section matches the provided context.`,
     context
   );
+
+  return [part1, part2, part3].join('\n\n');
 }
 
 // ---------------------------
@@ -210,6 +238,7 @@ function createAdminSupabase() {
   return createAdminClient(url, serviceKey);
 }
 
+
 export async function runResearchJobAdmin(jobId: string) {
   const admin = createAdminSupabase();
   const { data: job, error: jobFetchErr } = await admin.from('research_jobs').select('*').eq('id', jobId).maybeSingle();
@@ -248,7 +277,8 @@ export async function runResearchJobAdmin(jobId: string) {
 
     if (claims.length === 0) {
       if (!pdrText) {
-        const resultPayload = {
+        // ... (error handling)
+         const resultPayload = {
           claims: [],
           unifiedReport: 'No input text provided.',
           sources: [],
@@ -292,7 +322,7 @@ export async function runResearchJobAdmin(jobId: string) {
 
         const uniqueUrls = [...new Set(searchResults.map((r) => r.url))]
           .filter((u) => !!u && u !== '#error' && !u.includes('youtube.com')) 
-          .slice(0, deepMode ? Math.min(6, breadth * 2) : breadth);
+          .slice(0, deepMode ? Math.min(20, breadth * 3) : breadth);
 
         if (uniqueUrls.length === 0) {
             console.warn(`[Analyze] No results for claim: "${claim.text}". Potential Network/DNS Error.`);
@@ -301,7 +331,15 @@ export async function runResearchJobAdmin(jobId: string) {
             return;
         }
 
-        const crawlResults = (await Promise.all(uniqueUrls.map((url) => deepCrawl(url, 0)))).flat();
+        // Deep Crawl with enhanced depth if deepMode
+        const crawlResults = (await Promise.all(
+            uniqueUrls.map((url) => deepCrawl(
+                url, 
+                0, 
+                deepMode ? 2 : 1, // Max Depth: 2 if deep, 1 otherwise
+                deepMode ? 8 : 4  // Max Pages: 8 if deep, 4 otherwise
+            ))
+        )).flat();
 
         // --- FREE TIER OPTIMIZATION ---
         // 1. Concurrency: 1 (Sequential)
@@ -353,6 +391,7 @@ export async function runResearchJobAdmin(jobId: string) {
       }
     });
 
+    // ... (rest of function)
     const uniqueSources = Array.from(new Map(allSources.map((s) => [s.url, s])).values());
     const unifiedReport = await generateExecutiveReport(pdrText, distilledBlocks.join('\n\n'), uniqueSources);
 
@@ -451,18 +490,19 @@ export async function diveDeeperAction(params: {
 
   const urls = [...new Set(searchResults.map((r) => r.url))]
     .filter((u) => !!u && u !== '#error')
-    .slice(0, deepMode ? Math.min(10, breadth * 2) : breadth);
+    .slice(0, deepMode ? Math.min(20, breadth * 2) : breadth);
 
   const prioritizedUrls = seedUrl ? [seedUrl, ...urls.filter((u) => u !== seedUrl)] : urls;
 
-  const crawlResults = (await Promise.all(prioritizedUrls.map((u) => deepCrawl(u, depth)))).flat();
+  const crawlResults = (await Promise.all(prioritizedUrls.map((u) => deepCrawl(u, 0, depth, 6)))).flat();
 
   // --- FREE TIER OPTIMIZATION ---
   const summaries = await mapAsync(crawlResults, 1, async (p) => {
     await new Promise((r) => setTimeout(r, 1000));
     return fastSummarize(p.markdown, seedText);
   });
-
+  
+  // ... (rest of function)
   const branchContext = [
     `BRANCH_ID: ${branchId}`,
     `PARENT_NODE: ${parentNodeId}`,
@@ -530,6 +570,7 @@ Return:
     type: 'claim' as const,
     branchId,
     parentNodeId,
+    seedUrl: params.seedUrl, // fix to include seedUrl in node
   };
 
   const links = [
@@ -575,7 +616,7 @@ export async function askFeedContextAction(question: string) {
     const todayISO = new Date().toISOString().slice(0, 10);
 
     const feedContext = feed
-      .slice(0, 30)
+      .slice(0, 50) // Increased from 30 to 50
       .map((item) => {
         const date = item?.isoDate ? new Date(item.isoDate).toISOString() : 'unknown-date';
         return `Date: ${date}\nTitle: ${String(item?.title ?? '')}\nSource: ${String(item?.source ?? '')}\nSnippet: ${String(item?.contentSnippet ?? '')}\nLink: ${String(item?.link ?? '')}\n---`;
@@ -597,6 +638,7 @@ export async function askFeedContextAction(question: string) {
   }
 }
 
+
 // Called by Worker for Deep Dives (if needed for background processing)
 export async function runDeepDiveAdmin(branchId: string) {
   const admin = createAdminSupabase();
@@ -615,7 +657,7 @@ export async function runDeepDiveAdmin(branchId: string) {
     .slice(0, Math.min(10, breadth * 2));
 
   const prioritizedUrls = seed_url ? [seed_url, ...urls.filter((u) => u !== seed_url)] : urls;
-  const crawlResults = (await Promise.all(prioritizedUrls.map((u) => deepCrawl(u, depth)))).flat();
+  const crawlResults = (await Promise.all(prioritizedUrls.map((u) => deepCrawl(u, 0, depth, 6)))).flat();
 
   const summaries = await mapAsync(crawlResults, 3, async (p) => {
     await new Promise((r) => setTimeout(r, 150));
