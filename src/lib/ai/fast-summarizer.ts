@@ -74,35 +74,113 @@ export async function fastSummarize(text: string, query: string): Promise<string
   }
 }
 
+// --- Advanced Context Handler (Map-Reduce) ---
+async function mapReduceHighContext(instruction: string, context: string): Promise<string> {
+  // 1. Split context into 25k chunks (safe for 8k token output models like Llama 3.1)
+  const chunkSize = 25000;
+  const chunks = [];
+  for (let i = 0; i < context.length; i += chunkSize) {
+    chunks.push(context.slice(i, i + chunkSize));
+  }
+
+  console.log(`[MapReduce] Split context into ${chunks.length} chunks. Processing...`);
+
+  // 2. Map: Extract relevant points from each chunk concurrently
+  const extractions = await Promise.all(
+    chunks.map(async (chunk, i) => {
+      try {
+        const completion = await callWithRetry(
+          () =>
+            client.chat.completions.create({
+              model: 'llama3.1-8b',
+              temperature: 0.1, // Low temp for extraction
+              max_tokens: 1500,
+              messages: [
+                {
+                  role: 'system',
+                  content: 'Extract detailed bullets relevant to the user instruction. Be verbose with facts/numbers. Ignore irrelevant text.',
+                },
+                { role: 'user', content: `Instruction: ${instruction}\n\nContent Chunk ${i + 1}:\n${chunk}` },
+              ],
+            }),
+          { retries: 1 }
+        );
+        return completion.choices[0]?.message?.content || '';
+      } catch (e) {
+        console.warn(`[MapReduce] Chunk ${i} failed:`, e);
+        return '';
+      }
+    })
+  );
+
+  // 3. Reduce: Combine extractions
+  return extractions.join('\n\n');
+}
+
 export async function writeBetterReport(instruction: string, context: string): Promise<string> {
   if (!process.env.CEREBRAS_API_KEY) return `No Cerebras key.\n${instruction}\n\n${safeSlice(context, 2000)}...`;
 
-  try {
-    const completion = await callWithRetry(
-      () =>
-        client.chat.completions.create({
-          model: 'llama3.1-8b',
-          temperature: 0.25,
-          max_tokens: 8000, // <--- INCREASED from 4000 to 8000 to prevent cutoff
-          messages: [
-            {
-              role: 'system',
-              content:
-                'You are an expert technical research writer. Write concise, comprehensive, defensive reports. Separate evidence from assumptions. Use Markdown tables where useful.',
-            },
-            {
-              role: 'user',
-              content: `Instruction:\n${instruction}\n\nContext:\n${safeSlice(context, 50000)}`, // <--- INCREASED Context to 50k chars
-            },
-          ],
-        }),
-      { retries: 2 }
-    );
-    return (completion.choices[0]?.message?.content || '').trim();
-  } catch (e: any) {
-    console.error('Cerebras Writer Failed:', e?.status, e?.message);
-    return 'Failed to generate improved report.';
+  // Standard path: try full context first if it fits reasonably
+  // 50k chars is roughly 12-15k tokens. Llama 3.1 8B context is often 8k or 128k depending on provider.
+  // Cerebras Llama 3.1 8B usually supports 8k context, so 50k chars is ALREADY too big.
+  // We'll try the direct approach if < 20k chars (~5k tokens), otherwise Map-Reduce.
+  
+  let effectiveContext = context;
+
+  if (context.length > 20000) {
+      console.log(`[Writer] Context too large (${context.length} chars). Engaging Map-Reduce.`);
+      try {
+        const compressed = await mapReduceHighContext(instruction, context);
+        console.log(`[Writer] Compressed context to ${compressed.length} chars.`);
+        effectiveContext = `*** COMPRESSED CONTEXT (Extracted from ${context.length} chars) ***\n\n${compressed}`;
+      } catch (e) {
+          console.error('[Writer] Map-Reduce failed. Falling back to sliding window.', e);
+          effectiveContext = safeSlice(context, 25000); // Fallback
+      }
   }
+
+  const attempts = [
+    { ctxLen: 30000, outLen: 6000, desc: 'Standard' },
+    { ctxLen: 15000, outLen: 4000, desc: 'Crunch' },
+  ];
+
+  let lastError: any;
+
+  for (const attempt of attempts) {
+    try {
+      const completion = await callWithRetry(
+        () =>
+          client.chat.completions.create({
+            model: 'llama3.1-8b',
+            temperature: 0.25,
+            max_tokens: attempt.outLen,
+            messages: [
+              {
+                role: 'system',
+                content:
+                  'You are an expert technical research writer. Write concise, comprehensive, defensive reports. Separate evidence from assumptions. Use Markdown tables where useful.',
+              },
+              {
+                role: 'user',
+                content: `Instruction:\n${instruction}\n\nContext:\n${safeSlice(effectiveContext, attempt.ctxLen)}`,
+              },
+            ],
+          }),
+        { retries: 0 }
+      );
+      return (completion.choices[0]?.message?.content || '').trim();
+    } catch (e: any) {
+      lastError = e;
+      if (e?.status === 400 || e?.status === 413) {
+          console.warn(`[Writer] Attempt (${attempt.desc}) failed/too big. Trying smaller.`);
+          continue;
+      }
+      console.error('Cerebras Writer Failed:', e?.status, e?.message);
+      break; 
+    }
+  }
+
+  return `Failed to generate report. Last Error: ${lastError?.message}`;
 }
 
 export async function answerWithContext(question: string, context: string): Promise<string> {
