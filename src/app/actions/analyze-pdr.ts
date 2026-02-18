@@ -91,42 +91,45 @@ async function generateExecutiveReport(projectText: string, perClaimDistilled: s
       .join('\n')}`,
   ].join('\n\n');
 
-  // Chunk 1: Executive Summary & Key Decisions
+  // Chunk 1: Abstract & Intro
   const part1 = await writeBetterReport(
-    `Write PART 1 of a research report.
+    `Write PART 1 of a Scientific Research Paper.
 Required sections (in this order):
-1) Executive Summary (7-10 bullets, each bullet has "Because:" justification)
-2) Key Decisions (Markdown table: Decision | Recommendation | Confidence | Rationale | Risks)
+1) Title (Just the text, no markdown header)
+2) Abstract (A concise summary of the entire problem and solution)
+3) Introduction (Context, Problem Statement, Research Objectives)
 
-Constraints:
-- Do not invent sources.
-- Keep language professional and specific.`,
+Format: Markdown. Use # for Title, ## for Abstract/Intro.
+Constraint: Cite sources inline using [number] format (e.g. [1]) matching the provided source list.`,
     context
   );
 
-  // Chunk 2: Claim Register & Risk Register
+  // Chunk 2: Deep Facet Analysis (The Core)
   const part2 = await writeBetterReport(
-    `Write PART 2 of a research report.
-Required sections (in this order):
-3) Claim Register (Markdown table: Claim | Verdict | Confidence | Strongest Evidence | Open Questions)
-4) Risk Register (bullets grouped: Technical / Deployment / Legal-Ethical / Cost)
+    `Write PART 2: Deep Facet Analysis.
+Identify 3-4 key technical facets of the project (e.g. Frontend Architecture, AI Strategy, Backend/Infrastructure, Compliance).
+For EACH facet, write a subsection (## Facet Name) containing:
+- **Status/Evaluation**: Current state vs ideal state.
+- **Technology Recommendation**: Specific tools/libraries (e.g. Next.js, Supabase, LangChain) with justification.
+- **Success Metrics**: A Markdown Table defining 3 key metrics (Metric | Target | Measurement).
 
 Constraints:
-- Do not add Executive Summary or Key Decisions again.
-- Continue from where Part 1 left off.`,
+- Be extremely specific with technology names.
+- Use Markdown tables for metrics.
+- Cite sources inline using [number] format (e.g. [1]) matching the provided source list.`,
     context
   );
 
-  // Chunk 3: Next Actions & Appendix
+  // Chunk 3: Findings, Risks & Conclusion
   const part3 = await writeBetterReport(
-    `Write PART 3 of a research report.
-Required sections (in this order):
-5) Next Actions (checklist, prioritized)
-6) Appendix: Sources (bulleted list with short labels, no long quotes)
+    `Write PART 3: Findings & Conclusion.
+Required sections:
+4) Findings & Verdicts (Markdown Table: Claim | Verdict | Confidence | Rational)
+5) Risk Analysis (Technical, Deployment, Cost)
+6) Conclusion (Final recommendation and next steps)
 
-Constraints:
-- Do not add previous sections again.
-- Ensure the Sources section matches the provided context.`,
+Format: Markdown.
+Constraint: Cite sources inline using [number] format (e.g. [1]) matching the provided source list.`,
     context
   );
 

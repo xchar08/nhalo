@@ -15,74 +15,7 @@ function escapeLatex(text: string): string {
 }
 
 function processMarkdown(md: string): string {
-  let latex = md;
-
-  // 1. Headers
-  latex = latex.replace(/^# (.*$)/gm, (_, t) => `\\section*{${escapeLatex(t)}}`);
-  latex = latex.replace(/^## (.*$)/gm, (_, t) => `\\subsection*{${escapeLatex(t)}}`);
-  latex = latex.replace(/^### (.*$)/gm, (_, t) => `\\subsubsection*{${escapeLatex(t)}}`);
-  
-  // 2. Bold & Italic
-  latex = latex.replace(/\*\*(.*?)\*\*/g, (_, t) => `\\textbf{${escapeLatex(t)}}`);
-  latex = latex.replace(/\*(.*?)\*/g, (_, t) => `\\textit{${escapeLatex(t)}}`);
-
-  // 3. Links
-  // Note: We need to be careful not to escape the URL part too early or late.
-  // We'll simplisticly handle standard [text](url)
-  // We match [text](url) structure.
-  latex = latex.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, url) => {
-    return `\\href{${url}}{${escapeLatex(text)}}`; // URL usually shouldn't imply latex escaping, but specific chars might break it. 
-    // Ideally user raw urls or minimal escaping for url.
-  });
-
-  // 4. Lists
-  // Unordered lists
-  // This is a naive implementation; for nested lists or complex structures, a proper parser is needed.
-  // We'll wrap blocks of lines starting with - in itemize
-  
-  const lines = latex.split('\n');
-  let inList = false;
-  const processedLines: string[] = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('- ')) {
-      if (!inList) {
-        processedLines.push('\\begin{itemize}');
-        inList = true;
-      }
-      processedLines.push(`  \\item ${escapeLatex(trimmed.substring(2))}`);
-    } else {
-      if (inList) {
-        processedLines.push('\\end{itemize}');
-        inList = false;
-      }
-      
-      // If the line was already processed by header replacement (starts with \section etc), don't escape again completely
-      // But we handled headers via regex on the full string BEFORE split. 
-      // Wait, if we replace headers first, they look like "\section*{...}".
-      // We shouldn't escape backslashes in commands we just inserted.
-      
-      // Better approach: Escape text chunks, THEN apply formatting.
-      // But we can't easily identify chunks vs markup.
-      
-      // Let's refine the strategy:
-      // We will perform formatting line-by-line or block-by-block.
-      
-      // For this simplified version, let's stick to the current flow but fix the escaping issue.
-      // We should NOT have escaped everything in the replace checks above if we iterate lines here.
-      
-      // RESTARTING STRATEGY FOR ROBUSTNESS:
-      // 1. Split lines.
-      // 2. Process each line.
-      // 3. Handle state (lists).
-      
-      processedLines.push(line); // Placeholder, see improved logic below
-    }
-  }
-  if (inList) processedLines.push('\\end{itemize}');
-  
-  // Re-do with robust line processing
+  // This function is now just a wrapper around the robust processor
   return processLinesRobustly(md);
 }
 
@@ -90,21 +23,69 @@ function processLinesRobustly(md: string): string {
   const lines = md.split('\n');
   const out: string[] = [];
   let inList = false;
+  let inTable = false;
+  let tableRows: string[][] = [];
+  let tableAlignments: string[] = [];
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const trimmed = line.trim();
 
+    // --- TABLE HANDLING ---
+    if (trimmed.startsWith('|')) {
+      if (inList) { out.push('\\end{itemize}'); inList = false; }
+      
+      // Parse row
+      const row = trimmed.split('|').map(c => c.trim()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
+      
+      if (!inTable) {
+        // This is potentially the header
+        // Check next line for separator if possible, or just assume it is a table start
+        // Markdown tables usually require a header and a separator.
+        const nextLine = lines[i+1]?.trim();
+        if (nextLine?.startsWith('|') && nextLine.includes('---')) {
+            inTable = true;
+            tableRows.push(row);
+            // Process separator line immediately
+            const separator = nextLine.split('|').map(c => c.trim()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
+            tableAlignments = separator.map(s => {
+                if (s.startsWith(':') && s.endsWith(':')) return 'c';
+                if (s.endsWith(':')) return 'r';
+                return 'l';
+            });
+            i++; // Skip separator line
+            continue;
+        }
+      } else {
+        tableRows.push(row);
+      }
+      continue;
+    } else if (inTable) {
+      // Table ended
+      out.push(renderLatexTable(tableRows, tableAlignments));
+      inTable = false;
+      tableRows = [];
+      tableAlignments = [];
+    }
+
+    // --- HEADERS ---
     if (trimmed.startsWith('#')) {
       if (inList) { out.push('\\end{itemize}'); inList = false; }
       
       const level = trimmed.match(/^#+/)?.[0].length || 0;
       const text = trimmed.substring(level).trim();
-      const escapedText = formatInline(text);
       
-      if (level === 1) out.push(`\\section*{${escapedText}}`);
-      else if (level === 2) out.push(`\\subsection*{${escapedText}}`);
-      else if (level >= 3) out.push(`\\subsubsection*{${escapedText}}`);
-      else out.push(escapedText + '\\\\'); // Fallback
+      // Special Case: Abstract
+      if (text.toLowerCase() === 'abstract') {
+         out.push('\\begin{abstract}');
+         out.push(`\\section*{${escapeLatex(text)}}`); 
+      } else {
+          const escapedText = formatInline(text);
+          if (level === 1) out.push(`\\section*{${escapedText}}`);
+          else if (level === 2) out.push(`\\subsection*{${escapedText}}`);
+          else if (level >= 3) out.push(`\\subsubsection*{${escapedText}}`);
+          else out.push(escapedText + '\\\\'); 
+      }
       
     } else if (trimmed.startsWith('- ')) {
       if (!inList) { out.push('\\begin{itemize}'); inList = true; }
@@ -122,8 +103,31 @@ function processLinesRobustly(md: string): string {
   }
   
   if (inList) out.push('\\end{itemize}');
+  if (inTable) out.push(renderLatexTable(tableRows, tableAlignments));
   
   return out.join('\n');
+}
+
+function renderLatexTable(rows: string[][], alignments: string[]): string {
+    if (rows.length === 0) return '';
+    
+    // Default alignment if missing
+    const alignStr = alignments.length > 0 ? `|${alignments.join('|')}|` : `|${rows[0].map(() => 'l').join('|')}|`;
+    
+    let latex = '\\begin{table}[h]\n\\centering\n';
+    latex += `\\begin{tabular}{${alignStr}}\n\\hline\n`;
+    
+    // Header
+    const header = rows[0];
+    latex += header.map(c => `\\textbf{${formatInline(c)}}`).join(' & ') + ' \\\\\n\\hline\n';
+    
+    // Body
+    for (let i = 1; i < rows.length; i++) {
+        latex += rows[i].map(c => formatInline(c)).join(' & ') + ' \\\\\n\\hline\n';
+    }
+    
+    latex += '\\end{tabular}\n\\end{table}\n';
+    return latex;
 }
 
 function formatInline(text: string): string {
@@ -150,9 +154,6 @@ function formatInline(text: string): string {
   // Italic: \*(.*?)\*
   
   // Order matters. Link first.
-  
-  // Warning: This simplistic approach might fail on complex nested markdown. 
-  // It is acceptable for a "cheatsheet" style report generator.
   
   let parts: {type: 'text'|'bold'|'italic'|'link', content: string, url?: string}[] = [{type: 'text', content: text}];
   
@@ -197,8 +198,6 @@ function formatInline(text: string): string {
   applyRule(/\[([^\]]+)\]\(([^)]+)\)/g, 'link');
   applyRule(/\*\*(.*?)\*\*/g, 'bold');
   applyRule(/(?<!\*)\*(?!\*)(.*?)\*/g, 'italic'); // Stronger italic regex to avoid matching inside bold if bold wasn't consummed, or use non-greedy carefully.
-  // Actually, since we process bold first and consume it into 'bold' parts, standard italic regex shouldn't see the bold stars as text.
-  // But we must be careful with *italic*.
 
   
   return parts.map(p => {
@@ -218,9 +217,9 @@ export function markdownToLatex(title: string, markdownContent: string, sources:
   if (sources.length > 0) {
     sourcesSection = `
 \\section*{Sources}
-\\begin{itemize}
+\\begin{enumerate}[label={[\\arabic*]}]
 ${sources.map(s => `  \\item \\textbf{${escapeLatex(s.title || 'Source')}}: \\href{${s.url}}{${escapeLatex(s.url)}}`).join('\n')}
-\\end{itemize}
+\\end{enumerate}
 `;
   }
 
@@ -229,6 +228,9 @@ ${LATEX_PREAMBLE}
 \\title{${escapeLatex(title)}}
 \\date{\\today}
 \\maketitle
+
+\\tableofcontents
+\\newpage
 
 ${body}
 

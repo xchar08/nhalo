@@ -7,6 +7,9 @@ import mammoth from 'mammoth';
 import JSZip from 'jszip';
 import { XMLParser } from 'fast-xml-parser';
 
+// FIX: Bypass local issuer certificate errors for development crawlers
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 export interface SearchResult {
   title: string;
   url: string;
@@ -212,24 +215,34 @@ function looksLikeContentPath(host: string, path: string) {
 // ---------------------------
 async function withMutedConsole<T>(
   fn: () => Promise<T>,
-  opts?: { muteWarnIncludes?: string[]; muteLogIncludes?: string[] }
+  opts?: { muteWarnIncludes?: string[]; muteLogIncludes?: string[]; muteErrorIncludes?: string[] }
 ): Promise<T> {
   const muteWarnIncludes = opts?.muteWarnIncludes ?? [];
   const muteLogIncludes = opts?.muteLogIncludes ?? [];
+  const muteErrorIncludes = opts?.muteErrorIncludes ?? [];
 
   const originalWarn = console.warn;
   const originalLog = console.log;
+  const originalError = console.error;
+
+  const shouldMute = (msg: string, filters: string[]) => filters.some((s) => msg.includes(s));
 
   console.warn = (...args: any[]) => {
-    const msg = String(args?.[0] ?? '');
-    if (muteWarnIncludes.some((s) => msg.includes(s))) return;
+    const msg = args.map(String).join(' ');
+    if (shouldMute(msg, muteWarnIncludes)) return;
     originalWarn(...args);
   };
 
   console.log = (...args: any[]) => {
-    const msg = String(args?.[0] ?? '');
-    if (muteLogIncludes.some((s) => msg.includes(s))) return;
+    const msg = args.map(String).join(' ');
+    if (shouldMute(msg, muteLogIncludes)) return;
     originalLog(...args);
+  };
+
+  console.error = (...args: any[]) => {
+    const msg = args.map(String).join(' ');
+    if (shouldMute(msg, muteErrorIncludes)) return;
+    originalError(...args);
   };
 
   try {
@@ -237,6 +250,7 @@ async function withMutedConsole<T>(
   } finally {
     console.warn = originalWarn;
     console.log = originalLog;
+    console.error = originalError;
   }
 }
 
@@ -245,6 +259,7 @@ async function withMutedConsole<T>(
 // ---------------------------
 async function searchSerper(query: string): Promise<SearchResult[]> {
   if (!SERPER_KEY) return [];
+  if (!query) return [];
 
   console.log(`[Crawler] Using Serper.dev for: "${query}"`);
   try {
@@ -268,12 +283,16 @@ async function searchSerper(query: string): Promise<SearchResult[]> {
       }))
       .filter((r: SearchResult) => !isBadUrl(r.url) && !isTrapUrl(r.url));
   } catch (e: any) {
+    if (e.message?.includes('Serper API error')) {
+        console.warn(`[Crawler] Serper skipped (${e.message}). Falling back.`);
+        return []; 
+    }
     // Graceful handling for Network/DNS errors
     if (e.cause?.code === 'ENOTFOUND') {
       console.warn(`[Crawler] Network error: Cannot reach Google Serper. Check internet connection.`);
       return [];
     }
-    console.error('[Crawler] Serper failed:', e);
+    console.warn('[Crawler] Serper failed:', e.message);
     return [];
   }
 }
@@ -310,6 +329,10 @@ async function searchDuckDuckGoLite(query: string): Promise<SearchResult[]> {
       results.push({ title, url: rawUrl, snippet });
     });
 
+    if (results.length === 0) {
+      console.log('[Crawler] DDG Lite HTML preview:', html.slice(0, 500));
+    }
+
     return results.slice(0, 6);
   } catch (e: any) {
     // Graceful handling for Network/DNS errors
@@ -322,12 +345,60 @@ async function searchDuckDuckGoLite(query: string): Promise<SearchResult[]> {
   }
 }
 
+// ---------------------------
+// Zero-Click API (Fallback)
+// ---------------------------
+async function searchDuckDuckGoZeroClick(query: string): Promise<SearchResult[]> {
+  console.log(`[Crawler] Using DDG ZeroClick for: "${query}"`);
+  try {
+    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json`;
+    const response = await fetch(url);
+    if (!response.ok) return [];
+    
+    const json = await response.json();
+    const results: SearchResult[] = [];
+
+    // 1. Abstract
+    if (json.AbstractURL && json.AbstractText) {
+      results.push({
+        title: json.Heading || 'Summary',
+        url: json.AbstractURL,
+        snippet: json.AbstractText
+      });
+    }
+
+    // 2. Related Topics
+    if (json.RelatedTopics) {
+      for (const topic of json.RelatedTopics) {
+        if (topic.FirstURL && topic.Text) {
+          results.push({
+            title: topic.Text.split(' - ')[0] || 'Result',
+            url: topic.FirstURL,
+            snippet: topic.Text
+          });
+        }
+      }
+    }
+
+    return results.slice(0, 6);
+  } catch (e) {
+    console.error('[Crawler] DDG ZeroClick failed:', e);
+    return [];
+  }
+}
+
 export async function searchWeb(query: string): Promise<SearchResult[]> {
   if (SERPER_KEY) {
     const results = await searchSerper(query);
     if (results.length > 0) return results;
   }
-  return searchDuckDuckGoLite(query);
+  
+  // Try Lite scraping first
+  const liteResults = await searchDuckDuckGoLite(query);
+  if (liteResults.length > 0) return liteResults;
+
+  // Fallback to ZeroClick API
+  return searchDuckDuckGoZeroClick(query);
 }
 
 // ---------------------------
@@ -338,9 +409,9 @@ async function fetchArrayBuffer(url: string): Promise<{ buffer: Buffer; contentT
     const res = await fetch(url, {
       headers: {
         'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         Accept: '*/*',
-        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Language': 'en-US,en;q=0.9',
       },
       signal: AbortSignal.timeout(15000),
       cache: 'no-store',
@@ -354,7 +425,9 @@ async function fetchArrayBuffer(url: string): Promise<{ buffer: Buffer; contentT
   } catch (e: any) {
     if (e.cause?.code === 'ENOTFOUND') {
         // Silent fail for deep crawl items is usually better than spamming logs
-        // console.warn(`[Crawler] Failed to reach ${url} (DNS/Network)`);
+         console.warn(`[Crawler] Failed to reach ${url} (DNS/Network)`);
+    } else {
+        console.error(`[Crawler] FetchArrayBuffer error for ${url}:`, e);
     }
     throw e;
   }
@@ -373,7 +446,13 @@ async function fetchHtml(url: string): Promise<{ html: string; title: string; co
         cache: 'no-store',
     });
 
-    if (!res.ok) throw new Error(`HTML fetch failed ${res.status}`);
+    if (!res.ok) {
+        if (res.status === 403 || res.status === 404 || res.status === 410) {
+             console.warn(`[Crawler] Access denied/missing (${res.status}): ${url}`);
+             return { html: '', title: '', contentType: '' };
+        }
+        throw new Error(`HTML fetch failed ${res.status}`);
+    }
 
     const contentType = res.headers.get('content-type') || '';
     const html = await res.text();
@@ -381,10 +460,12 @@ async function fetchHtml(url: string): Promise<{ html: string; title: string; co
     const title = $('title').text() || url;
     return { html, title, contentType };
   } catch (e: any) {
-    if (e.cause?.code === 'ENOTFOUND') {
-        // console.warn(`[Crawler] Failed to reach ${url} (DNS/Network)`);
+    if (e.cause?.code === 'ENOTFOUND' || e.cause?.code === 'ECONNREFUSED' || e.message?.includes('timeout')) {
+         console.warn(`[Crawler] Unreachable (${url}): ${e.message}`);
+         return { html: '', title: '', contentType: '' };
     }
-    throw e;
+    console.warn(`[Crawler] FetchHtml error for ${url}:`, e.message);
+    return { html: '', title: '', contentType: '' };
   }
 }
 
@@ -392,14 +473,28 @@ async function fetchHtml(url: string): Promise<{ html: string; title: string; co
 // Extractors
 // ---------------------------
 async function extractPdfText(buffer: Buffer): Promise<string> {
-  const data = await withMutedConsole(
-    async () => (pdfParse(buffer) as any),
-    { muteWarnIncludes: ['TT: undefined function'], muteLogIncludes: ['TT: undefined function'] }
-  );
+  // Magic bytes check: %PDF (hex: 25 50 44 46)
+  if (!buffer || buffer.length < 4 || buffer.toString('ascii', 0, 4) !== '%PDF') {
+      console.warn('[extractPdfText] Buffer is not a valid PDF (missing %PDF header). Skipping.');
+      return '';
+  }
 
-  const text = safeTextSlice(String(data?.text || ''));
-  if (text.length < 80) return '';
-  return text;
+  try {
+    const data = await withMutedConsole(
+      async () => (pdfParse(buffer) as any),
+      { 
+          muteWarnIncludes: ['TT: undefined function', 'Ignoring invalid character', 'Invalid source map'], 
+          muteLogIncludes: ['TT: undefined function'],
+          muteErrorIncludes: ['Invalid source map', 'InvalidPDFException']
+      }
+    );
+    const text = safeTextSlice(String(data?.text || ''));
+    if (text.length < 80) return '';
+    return text;
+  } catch (e: any) {
+    console.warn(`[extractPdfText] Failed to parse PDF: ${e.message}`);
+    return '';
+  }
 }
 
 async function extractDocxText(buffer: Buffer): Promise<string> {
@@ -564,7 +659,9 @@ export async function deepCrawl(
   // Binary first
   if (isLikelyBinary(url)) {
     try {
-      const { buffer, contentType } = await fetchArrayBuffer(url);
+      const binRes = await fetchArrayBuffer(url);
+      if (!binRes) return [];
+      const { buffer, contentType } = binRes;
       const ext = extLower(url);
 
       if (contentType.includes('application/pdf') || ext === 'pdf') {
@@ -586,7 +683,8 @@ export async function deepCrawl(
       }
 
       return [];
-    } catch {
+    } catch (e) {
+      console.error('[DeepCrawl] Binary extract failed:', e);
       return [];
     }
   }
@@ -598,11 +696,14 @@ export async function deepCrawl(
     // Some endpoints say HTML but deliver PDF bytes
     if (contentType.includes('application/pdf')) {
       try {
-        const { buffer } = await fetchArrayBuffer(url);
+        const pdfRes = await fetchArrayBuffer(url);
+        if (!pdfRes) return [];
+        const { buffer } = pdfRes;
         const text = await extractPdfText(buffer);
         if (!text) return [];
         return [{ url, title, markdown: text, depth: currentDepth, contentType }];
-      } catch {
+      } catch (e) {
+        console.error('[DeepCrawl] PDF fallback failed:', e);
         return [];
       }
     }
@@ -624,7 +725,8 @@ export async function deepCrawl(
     }
 
     return results;
-  } catch {
+  } catch (e) {
+    console.error('[DeepCrawl] Final catch:', e);
     return [];
   }
 }

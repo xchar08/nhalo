@@ -127,7 +127,6 @@ export default function LatexEditor({ initialLatex, onClose, filename = 'report.
   const compileLatex = () => {
     try {
       setError(null);
-      const generator = new HtmlGenerator({ hyphenate: false });
       
       // Robust Preview Generation
       // 1. Strip all packages to prevent 'module not found' errors
@@ -137,12 +136,43 @@ export default function LatexEditor({ initialLatex, onClose, filename = 'report.
         .replace(/\\geometry\{[^}]+\}/g, '')
         .replace(/\\hypersetup\{[^}]+\}/g, '');
 
-      // 2. Extract Body Content (between begin/end document)
-      const bodyMatch = cleanLatex.match(/\\begin\{document\}([\s\S]*)\\end\{document\}/);
-      let bodyContent = bodyMatch ? bodyMatch[1] : cleanLatex;
+      // 2. Extract Body Content (Strip-and-Wrap Strategy)
+      // This is the most robust way: We simply remove the wrapper tags and re-wrap.
+      
+      // 2. Extract Body Content (Strip-and-Wrap Strategy)
+      // Regex-based split for robustness against whitespace
+      // 2. Extract Body Content (Strip-and-Wrap Strategy)
+      // Regex-based split for robustness against whitespace
+      let bodyContent = cleanLatex;
+      let isFullDocument = false; // Track if we found the structure
+      
+      const beginRegex = /\\begin\s*\{document\}/;
+      const beginMatch = cleanLatex.match(beginRegex);
+      
+      if (beginMatch && beginMatch.index !== undefined) {
+          // Found \begin{document} - Start from end of tag
+          bodyContent = cleanLatex.substring(beginMatch.index + beginMatch[0].length);
+          isFullDocument = true;
+          
+          // Also look for end tag to slice cleanly
+          const endRegex = /\\end\s*\{document\}/;
+          const endMatch = bodyContent.match(endRegex);
+          if (endMatch && endMatch.index !== undefined) {
+             bodyContent = bodyContent.substring(0, endMatch.index);
+          }
+      } 
+      // If NOT found, we assume it's either a snippet (no preamble) OR a complex doc we failed to parse.
+      // However, if it HAS \documentclass, we must treat it as RAW to avoid "Two \documentclass" error.
+      else if (cleanLatex.includes('\\documentclass')) {
+          isFullDocument = false; // It IS a full doc, but we failed to split it, so treat as raw to preserve structure
+      }
 
-      // 3. Remove other problematic preamble commands that might have leaked into body or if body extraction failed
-      bodyContent = bodyContent
+      // Step C: Sanitize remaining preamble junk (Only needed if we are effectively extracting body)
+      // If we are keeping the doc raw, we shouldn't aggressively strip things that might damage structure,
+      // BUT we still need to kill known bad packages.
+      // Ideally, the initial `cleanLatex` pass handled packages. 
+      // Here we strip formatting commands that cause render issues.
+      const sanitizedContent = bodyContent
         .replace(/\\titleformat[\s\S]*?\n\n/g, '')
         .replace(/\\pagestyle\{[^}]+\}/g, '')
         .replace(/\\fancyhf\{\}/g, '')
@@ -150,17 +180,94 @@ export default function LatexEditor({ initialLatex, onClose, filename = 'report.
         .replace(/\\setlength\{.*?\}/g, '')
         .replace(/\\definecolor\{[^}]+\}\{[^}]+\}\{[^}]+\}/g, '');
 
-      // 4. Construct Minimal Valid Document with Polyfills
-      const previewLatex = `
+      // 3. Construct Final Preview
+      let finalPreview = '';
+      
+      if (isFullDocument) {
+          // Case A: We successfully extracted body. Wrap it in safe shell.
+          finalPreview = `
 \\documentclass{article}
 \\newcommand{\\href}[2]{#2} 
 \\newcommand{\\url}[1]{#1}
 \\begin{document}
-${bodyContent}
-\\end{document}
-`;
-      
-      const doc = parse(previewLatex, { generator: generator }).htmlDocument();
+${sanitizedContent}
+\\end{document}`;
+      } else if (cleanLatex.includes('\\documentclass')) {
+          // Case B: It is a full doc, but we failed to split it OR chose to keep it raw.
+          // Inject polyfills after documentclass
+          finalPreview = cleanLatex.replace(
+              /(\\documentclass.*?})/s, 
+              '$1\n\\newcommand{\\href}[2]{#2}\n\\newcommand{\\url}[1]{#1}'
+          );
+      } else {
+          // Case C: Snippet (No documentclass, no begin match). Wrap it.
+          finalPreview = `
+\\documentclass{article}
+\\newcommand{\\href}[2]{#2} 
+\\newcommand{\\url}[1]{#1}
+\\begin{document}
+${sanitizedContent}
+\\end{document}`;
+      }
+      console.log('--- Latex Preview Debug ---');
+      console.log('Mode:', isFullDocument ? 'Wrapped Body' : 'Raw/Other');
+      console.log('Final Preview Preview (first 100 chars):', finalPreview.substring(0, 100).replace(/\n/g, '\\n'));
+
+      let doc;
+      try {
+        console.log('Attempting Main Parse...');
+        // Use a fresh generator for the main parse to avoid any previous state
+        const mainGenerator = new HtmlGenerator({ hyphenate: false });
+        doc = parse(finalPreview, { generator: mainGenerator }).htmlDocument();
+      } catch (e1) {
+        console.warn('Main Parse Failed, attempting Fallback Fragment:', e1);
+        try {
+           // Fallback: Just try parsing the sanitized body content as a fragment
+           // KEY FIX 1: Strip structure AND metadata (title, date) which causes "Invalid URL" or macro errors in fragment mode
+           let rawBody = sanitizedContent
+              .replace(/\\documentclass[\s\S]*?\{.*?\}/, '')
+              .replace(/\\begin\s*\{document\}/, '')
+              .replace(/\\end\s*\{document\}/, '')
+              .replace(/\\maketitle/g, '')
+              .replace(/\\title\{.*?\}/g, '')
+              .replace(/\\date\{.*?\}/g, '')
+              .replace(/\\author\{.*?\}/g, '');
+
+           // KEY FIX 2: Polyfill \href and \url via Regex replacement 
+           // because \newcommand is often rejected or causes issues in fragment mode
+           // \href{url}{text} -> text
+           // \url{url} -> url
+           rawBody = rawBody
+              .replace(/\\href\{[^}]+\}\{(.+?)\}/g, '$1')
+              .replace(/\\url\{(.*?)\}/g, '$1')
+              // Strip environments
+              .replace(/\\begin\{abstract\}/g, '\\textbf{Abstract}\n\n')
+              .replace(/\\end\{abstract\}/g, '\n\n')
+              .replace(/\\begin\{quote\}/g, '')
+              .replace(/\\end\{quote\}/g, '')
+              .replace(/\\begin\{table\}(\[.*?\])?/g, '')
+              .replace(/\\end\{table\}/g, '')
+              .replace(/\\centering/g, '')
+              .replace(/\\begin\{tabular\}\{.*?\}/g, '')
+              .replace(/\\end\{tabular\}/g, '')
+              .replace(/\\hline/g, '')
+              // Replace separators (naive, but works for preview)
+              .replace(/&/g, ' | ')
+              .replace(/\\\\/g, '\n\n');
+
+           const fragmentPreview = rawBody.trim();
+
+           console.log('Fallback Mode: Parsing raw content without wrappers or macros.');
+           
+           // KEY FIX 3: Use a FRESH generator instance. 
+           // Reusing the same generator after a failed parse causes "Two \documentclass" errors due to retained state.
+           const fallbackGenerator = new HtmlGenerator({ hyphenate: false });
+           doc = parse(fragmentPreview, { generator: fallbackGenerator }).htmlDocument();
+        } catch (e2) {
+           console.error('Fragment Parse Failed:', e2);
+           throw e2; 
+        }
+      }
       
       const styles = `
         <style>
