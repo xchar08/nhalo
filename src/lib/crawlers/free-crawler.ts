@@ -270,7 +270,13 @@ async function searchSerper(query: string): Promise<SearchResult[]> {
       cache: 'no-store',
     });
 
-    if (!response.ok) throw new Error(`Serper API error: ${response.status}`);
+    if (!response.ok) {
+        if (response.status === 400 || response.status === 401) {
+             const errText = await response.text();
+             console.error(`\n\n[Crawler] 🚨 SERPER ${response.status} DETAILS 🚨\n${errText}\n-----------------------------------\n`);
+        }
+        throw new Error(`Serper API error: ${response.status}`);
+    }
 
     const data = await response.json();
     if (!data?.organic) return [];

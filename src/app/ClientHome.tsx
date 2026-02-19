@@ -228,7 +228,8 @@ export default function ClientHome() {
         }
       }
 
-      await new Promise((r) => setTimeout(r, 1200));
+      console.log(`[Client] Polling job ${jobId}...`); // Visibility
+      await new Promise((r) => setTimeout(r, 4000)); // Slow down loop
     }
 
     throw new Error('Timed out waiting for job to finish');

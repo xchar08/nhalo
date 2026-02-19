@@ -217,7 +217,7 @@ export function markdownToLatex(title: string, markdownContent: string, sources:
   if (sources.length > 0) {
     sourcesSection = `
 \\section*{Sources}
-\\begin{enumerate}[label={[\\arabic*]}]
+\\begin{enumerate}
 ${sources.map(s => `  \\item \\textbf{${escapeLatex(s.title || 'Source')}}: \\href{${s.url}}{${escapeLatex(s.url)}}`).join('\n')}
 \\end{enumerate}
 `;
