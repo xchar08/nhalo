@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Save, RefreshCw, Download, Share2, Users } from 'lucide-react';
+import { X, Save, RefreshCw, Download, Share2, Users, ChevronDown } from 'lucide-react';
 import Editor, { OnMount } from '@monaco-editor/react';
 import * as Y from 'yjs';
 import { WebsocketProvider } from 'y-websocket';
@@ -28,6 +28,7 @@ export default function LatexEditor({ initialLatex, onClose, filename = 'report.
   const [reportId, setReportId] = useState<string | null>(null);
   const [status, setStatus] = useState<'local' | 'syncing' | 'connected'>('local');
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const [shareEmail, setShareEmail] = useState('');
   const [shareRole, setShareRole] = useState<'view'|'edit'>('view');
 
@@ -298,6 +299,12 @@ ${sanitizedContent}
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadPdf = () => {
+    if (iframeRef.current?.contentWindow) {
+      iframeRef.current.contentWindow.print();
+    }
+  };
+
   const handleShare = async () => {
     if (!reportId) return;
     try {
@@ -347,12 +354,35 @@ ${sanitizedContent}
             >
               <RefreshCw size={16} />
             </button>
-            <button 
-              onClick={handleDownload}
-              className="flex items-center gap-2 px-3 py-1.5 bg-cyan-600/20 text-cyan-400 border border-cyan-500/30 rounded hover:bg-cyan-600/30 transition-colors text-sm font-medium"
-            >
-              <Download size={14} /> Download .tex
-            </button>
+            
+            <div className="relative">
+              <button 
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                className="flex items-center gap-2 px-3 py-1.5 bg-cyan-600/20 text-cyan-400 border border-cyan-500/30 rounded hover:bg-cyan-600/30 transition-colors text-sm font-medium"
+              >
+                <Download size={14} /> Export <ChevronDown size={14} />
+              </button>
+              
+              {showExportMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)}></div>
+                  <div className="absolute right-0 mt-2 w-36 bg-[#252525] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden py-1">
+                    <button 
+                      onClick={() => { handleDownload(); setShowExportMenu(false); }} 
+                      className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
+                    >
+                      .tex Source
+                    </button>
+                    <button 
+                      onClick={() => { handleDownloadPdf(); setShowExportMenu(false); }} 
+                      className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-white/10 hover:text-white transition-colors"
+                    >
+                      PDF (Print)
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <div className="w-px h-6 bg-white/10 mx-2" />
             <button 
               onClick={onClose}

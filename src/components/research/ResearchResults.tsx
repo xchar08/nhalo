@@ -8,7 +8,8 @@ import {
   ExternalLink,
   Globe,
   Newspaper,
-  Rss
+  Rss,
+  ChevronDown
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -55,6 +56,7 @@ export default function ResearchResults({
   
   const [showLatexEditor, setShowLatexEditor] = useState(false);
   const [latexSource, setLatexSource] = useState('');
+  const [showExportMenu, setShowExportMenu] = useState(false);
 
   const fetchLatex = async () => {
      if (!jobId) return;
@@ -97,25 +99,26 @@ export default function ResearchResults({
             <div className="max-w-3xl mx-auto">
               <div className="flex justify-between items-center mb-8 border-b border-white/10 pb-4">
                  <h2 className="text-2xl font-bold text-white">Research Report</h2>
-                 <div className="flex gap-2 print:hidden">
-                    <button
-                       onClick={() => handleExport('markdown')}
-                       className="flex items-center gap-2 px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 text-xs text-gray-300 transition-colors border border-white/10"
-                    >
-                      <Copy size={12} /> MD
-                    </button>
-                    <button
-                       onClick={() => handleExport('html')}
-                       className="flex items-center gap-2 px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 text-xs text-gray-300 transition-colors border border-white/10"
-                    >
-                      <Download size={12} /> HTML
-                    </button>
-                    <button
-                       onClick={() => handleExport('pdf')}
-                       className="flex items-center gap-2 px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 text-xs text-gray-300 transition-colors border border-white/10"
-                    >
-                      <Share size={12} /> PDF
-                    </button>
+                 <div className="flex gap-2 print:hidden relative">
+                    <div className="relative">
+                      <button
+                         onClick={() => setShowExportMenu(!showExportMenu)}
+                         className="flex items-center gap-2 px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 text-xs text-gray-300 transition-colors border border-white/10"
+                      >
+                        <Download size={12} /> Export <ChevronDown size={12} />
+                      </button>
+                      
+                      {showExportMenu && (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)}></div>
+                          <div className="absolute right-0 mt-2 w-32 bg-[#252525] border border-white/10 rounded-lg shadow-xl z-50 overflow-hidden py-1">
+                            <button onClick={() => { handleExport('markdown'); setShowExportMenu(false); }} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-white/10 transition-colors">Markdown (.md)</button>
+                            <button onClick={() => { handleExport('html'); setShowExportMenu(false); }} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-white/10 transition-colors">HTML Export</button>
+                            <button onClick={() => { handleExport('pdf'); setShowExportMenu(false); }} className="block w-full text-left px-4 py-2 text-xs text-gray-300 hover:bg-white/10 transition-colors">PDF (Print)</button>
+                          </div>
+                        </>
+                      )}
+                    </div>
                     <button
                        onClick={fetchLatex}
                        disabled={!jobId}
